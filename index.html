@@ -917,6 +917,46 @@ let peer = null;
 let p2pConnections = new Map();
 let crtOverlayEnabled = false;
 
+// ---- Game Tuning Constants ----
+const TUNING = {
+  // Item effect durations (in frames, ~60fps)
+  BOOST_DURATION: 75,
+  SHIELD_DURATION: 360,
+  SHIELD_DURATION_RISSAL: 540,
+  HANDLING_DURATION: 360,
+  HOTFIX_DURATION: 150,
+  ITEM_ROLL_TIME: 45,
+  SPINOUT_TIME: 45,
+  SPINOUT_TIME_SHORT: 22,
+
+  // Drift mini-turbo charge thresholds
+  DRIFT_TIER1: 25,
+  DRIFT_TIER2: 60,
+  DRIFT_TIER3: 100,
+
+  // Drift mini-turbo boost durations (frames)
+  DRIFT_BOOST_T1: 24,
+  DRIFT_BOOST_T2: 48,
+  DRIFT_BOOST_T3: 72,
+
+  // Physics
+  BRAKE_FORCE: 0.18,
+  FRICTION: 0.020,
+  REVERSE_MAX: 2.4,
+  GRIP_NORMAL: 0.18,
+  GRIP_DRIFT: 0.045,
+  GRIP_NORMAL_ANTON: 0.12,
+  GRIP_DRIFT_ANTON: 0.030,
+  OFF_ROAD_SPEED_MULT: 0.65,
+
+  // Spatial audio
+  SPATIAL_RANGE: 1200,
+  SPATIAL_PAN_RANGE: 300,
+
+  // Music
+  FINAL_LAP_TEMPO_BOOST: 18,
+};
+
 // ---- Character Configurations ----
 const CHARACTERS = [
   {
@@ -1796,8 +1836,8 @@ const Sound = {
     const rightX = -Math.sin(game.player.heading);
     const rightY = Math.cos(game.player.heading);
     const relX = dx * rightX + dy * rightY;
-    const pan = Math.max(-1, Math.min(1, relX / 300));
-    const scaledVol = vol * Math.max(0, Math.min(1, 1 - d / 1200));
+    const pan = Math.max(-1, Math.min(1, relX / TUNING.SPATIAL_PAN_RANGE));
+    const scaledVol = vol * Math.max(0, Math.min(1, 1 - d / TUNING.SPATIAL_RANGE));
     return { pan, scaledVol };
   },
 
@@ -2467,7 +2507,7 @@ const Sound = {
     const t = this.tracks[safeIdx];
     this.tempo = t.tempo;
     if (game.player && game.player.lap >= TOTAL_LAPS - 1) {
-      this.tempo = t.tempo + 18;
+      this.tempo = t.tempo + TUNING.FINAL_LAP_TEMPO_BOOST;
     }
     setTimeout(() => { this.startMusic(); }, 60);
   },
@@ -5360,16 +5400,15 @@ class Kart {
     // Tunables from character configuration
     this.baseMaxSpeed = char.maxSpeed;
     this.maxSpeed = char.maxSpeed;
-    this.reverseMax = 2.4;
+    this.reverseMax = TUNING.REVERSE_MAX;
     this.acceleration = char.acceleration;
-    this.brakeForce = 0.18;
-    this.friction = 0.020;
+    this.brakeForce = TUNING.BRAKE_FORCE;
+    this.friction = TUNING.FRICTION;
     this.turnSpeed = char.turnSpeed;
     this.weight = char.weight || 20;
 
-    // Anton has very low lateral grip causing him to slide wildly
-    this.gripNormal = char.id === "anton" ? 0.12 : 0.18;
-    this.gripDrift = char.id === "anton" ? 0.030 : 0.045;
+    this.gripNormal = char.id === "anton" ? TUNING.GRIP_NORMAL_ANTON : TUNING.GRIP_NORMAL;
+    this.gripDrift = char.id === "anton" ? TUNING.GRIP_DRIFT_ANTON : TUNING.GRIP_DRIFT;
 
     // State
     this.boostTimer = 0;       // active boost duration (frames)
@@ -5439,12 +5478,12 @@ class Kart {
     }
 
     if (type === "boost") {
-      this.boostTimer = Math.max(this.boostTimer, 75);
+      this.boostTimer = Math.max(this.boostTimer, TUNING.BOOST_DURATION);
       triggerQuote(this, "boost");
     } else if (type === "shield") {
-      this.shieldTimer = this.charId === "rissal" ? 540 : 360;
+      this.shieldTimer = this.charId === "rissal" ? TUNING.SHIELD_DURATION_RISSAL : TUNING.SHIELD_DURATION;
     } else if (type === "handling") {
-      this.handlingTimer = 360;
+      this.handlingTimer = TUNING.HANDLING_DURATION;
     } else if (type === "conflict") {
       const fx = Math.cos(this.heading), fy = Math.sin(this.heading);
       const dropX = this.x - fx * 32;
@@ -5487,9 +5526,9 @@ class Kart {
     } else if (type === "mergerequest") {
       startMergeRequestPull(this);
     } else if (type === "hotfix") {
-      this.boostTimer = Math.max(this.boostTimer, 150);
-      this.shieldTimer = Math.max(this.shieldTimer, 150);
-      this.invuln = Math.max(this.invuln, 150);
+      this.boostTimer = Math.max(this.boostTimer, TUNING.HOTFIX_DURATION);
+      this.shieldTimer = Math.max(this.shieldTimer, TUNING.HOTFIX_DURATION);
+      this.invuln = Math.max(this.invuln, TUNING.HOTFIX_DURATION);
       this.ultraBoostActive = true;
       triggerQuote(this, "boost");
     }
@@ -5601,11 +5640,11 @@ class Kart {
       // Drift sparks generation from rear wheels
       if (Math.random() < 0.35 * dt) {
         let sparkColor = null;
-        if (this.driftCharge >= 100) {
+        if (this.driftCharge >= TUNING.DRIFT_TIER3) {
           sparkColor = pick(["#ff4d6d", "#7b75ff", "#ff00ff"]); // Purple/Pink (Tier 3)
-        } else if (this.driftCharge >= 60) {
+        } else if (this.driftCharge >= TUNING.DRIFT_TIER2) {
           sparkColor = "#fd9927"; // Orange (Tier 2)
-        } else if (this.driftCharge >= 25) {
+        } else if (this.driftCharge >= TUNING.DRIFT_TIER1) {
           sparkColor = "#00e5ff"; // Blue (Tier 1)
         }
 
@@ -5630,24 +5669,24 @@ class Kart {
       }
     } else {
       // Release drift -> boost if charged enough
-      if (this.driftCharge >= 25 && Math.abs(vF) > 2) {
+      if (this.driftCharge >= TUNING.DRIFT_TIER1 && Math.abs(vF) > 2) {
         let boostTime = 0;
         let text = "";
         let color = "";
 
-        if (this.driftCharge >= 100) {
-          boostTime = 84; // 1.4s (Tier 3)
+        if (this.driftCharge >= TUNING.DRIFT_TIER3) {
+          boostTime = TUNING.DRIFT_BOOST_T3;
           text = "ULTRA TURBO!";
-          color = "#ff4d6d"; // Neon Pink
+          color = "#ff4d6d";
           this.ultraBoostActive = true;
-        } else if (this.driftCharge >= 60) {
-          boostTime = 48; // 0.8s (Tier 2)
+        } else if (this.driftCharge >= TUNING.DRIFT_TIER2) {
+          boostTime = TUNING.DRIFT_BOOST_T2;
           text = "SUPER TURBO!";
-          color = "#fd9927"; // Accent Orange
+          color = "#fd9927";
         } else {
-          boostTime = 24; // 0.4s (Tier 1)
+          boostTime = TUNING.DRIFT_BOOST_T1;
           text = "MINI TURBO";
-          color = "#00e5ff"; // Cyan/Blue
+          color = "#00e5ff";
         }
 
         this.boostTimer = Math.max(this.boostTimer, boostTime);
@@ -7175,7 +7214,7 @@ function checkItems(kart) {
       // Mario Kart-style Item Slot Roulette trigger
       if (kart.itemState === "empty") {
         kart.itemState = "rolling";
-        kart.itemRollTimer = 45; // 0.75 seconds to shuffle and decide
+        kart.itemRollTimer = TUNING.ITEM_ROLL_TIME;
 
         if (kart.isPlayer) {
           Sound.itembox();
@@ -7533,7 +7572,7 @@ function update(dt, time) {
               game.particles.burst(h.x, h.y, "#78dcff", 15, { type: "spark", spdMin: 1.5, spdMax: 4 });
             } else {
               if (isDossier && kart.charId === "florian") {
-                kart.spinoutTimer = 22; // cuts spinout in half
+                kart.spinoutTimer = TUNING.SPINOUT_TIME_SHORT;
                 kart.spinAngle = 0;
                 kart.vx *= 0.5; kart.vy *= 0.5;
                 kart.shieldTimer = 360; // instantly generates Compliance Shield
@@ -7560,7 +7599,7 @@ function update(dt, time) {
                 if (game.multiplayer && game.player2 && !game.player2.finished) allHumanFinished = false;
                 if (allHumanFinished) setTimeout(() => finishRace(), 1800);
               } else {
-                kart.spinoutTimer = 45; kart.spinAngle = 0; kart.vx = 0; kart.vy = 0;
+                kart.spinoutTimer = TUNING.SPINOUT_TIME; kart.spinAngle = 0; kart.vx = 0; kart.vy = 0;
                 if (kart.isPlayer) { Sound.crash(); game.shake = Math.max(game.shake, 8); }
                 const hazardColor = isDossier ? "#57f2ff" : (isRegulatory ? "#ff3366" : "#ff4d6d");
                 const hazardText = isDossier ? "AUDITED!" : (isRegulatory ? "REGULATED!" : "CONFLICT!");
@@ -8369,10 +8408,10 @@ function drawHUD(time) {
     const x = (VIEW_W - w) / 2, y = VIEW_H - 30;
     ctx.fillStyle = "rgba(0,0,0,0.4)";
     ctx.fillRect(x, y, w, h);
-    const charge = clamp(game.player.driftCharge / 100, 0, 1);
+    const charge = clamp(game.player.driftCharge / TUNING.DRIFT_TIER3, 0, 1);
     let col = "#00e5ff"; // Blue (Tier 1)
-    if (game.player.driftCharge >= 100) col = "#ff4d6d"; // Pink (Tier 3)
-    else if (game.player.driftCharge >= 60) col = "#fd9927"; // Orange (Tier 2)
+    if (game.player.driftCharge >= TUNING.DRIFT_TIER3) col = "#ff4d6d"; // Pink (Tier 3)
+    else if (game.player.driftCharge >= TUNING.DRIFT_TIER2) col = "#fd9927"; // Orange (Tier 2)
     ctx.fillStyle = col;
     ctx.fillRect(x, y, w * charge, h);
   }
@@ -8711,10 +8750,10 @@ function drawHUDMultiplayer(time) {
     const x = 145, y = VIEW_H - 25;
     ctx.fillStyle = "rgba(0,0,0,0.4)";
     ctx.fillRect(x, y, w, h);
-    const charge = clamp(game.player.driftCharge / 100, 0, 1);
+    const charge = clamp(game.player.driftCharge / TUNING.DRIFT_TIER3, 0, 1);
     let col = "#00e5ff"; // Blue (Tier 1)
-    if (game.player.driftCharge >= 100) col = "#ff4d6d"; // Pink (Tier 3)
-    else if (game.player.driftCharge >= 60) col = "#fd9927"; // Orange (Tier 2)
+    if (game.player.driftCharge >= TUNING.DRIFT_TIER3) col = "#ff4d6d"; // Pink (Tier 3)
+    else if (game.player.driftCharge >= TUNING.DRIFT_TIER2) col = "#fd9927"; // Orange (Tier 2)
     ctx.fillStyle = col;
     ctx.fillRect(x, y, w * charge, h);
   }
@@ -8724,10 +8763,10 @@ function drawHUDMultiplayer(time) {
     const x = VIEW_W - 135 - 130, y = VIEW_H - 25;
     ctx.fillStyle = "rgba(0,0,0,0.4)";
     ctx.fillRect(x, y, w, h);
-    const charge = clamp(game.player2.driftCharge / 100, 0, 1);
+    const charge = clamp(game.player2.driftCharge / TUNING.DRIFT_TIER3, 0, 1);
     let col = "#00e5ff"; // Blue (Tier 1)
-    if (game.player2.driftCharge >= 100) col = "#ff4d6d"; // Pink (Tier 3)
-    else if (game.player2.driftCharge >= 60) col = "#fd9927"; // Orange (Tier 2)
+    if (game.player2.driftCharge >= TUNING.DRIFT_TIER3) col = "#ff4d6d"; // Pink (Tier 3)
+    else if (game.player2.driftCharge >= TUNING.DRIFT_TIER2) col = "#fd9927"; // Orange (Tier 2)
     ctx.fillStyle = col;
     ctx.fillRect(x, y, w * charge, h);
   }
@@ -9175,7 +9214,7 @@ function setMusicTrack(idx) {
     const track = Sound.tracks[safeIdx];
     Sound.tempo = track.tempo;
     if (game.player && game.player.lap >= TOTAL_LAPS - 1) {
-      Sound.tempo = track.tempo + 18;
+      Sound.tempo = track.tempo + TUNING.FINAL_LAP_TEMPO_BOOST;
     }
   }
   renderMusicSettings();
