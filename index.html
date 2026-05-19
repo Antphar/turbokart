@@ -796,7 +796,7 @@
   <div id="p2p-screen" class="overlay hidden">
     <div class="title-text" style="font-size: clamp(32px, 5.5vw, 64px); margin-bottom: 4px;">P2P Multiplayer</div>
     <div class="subtitle" style="margin-bottom: 12px; color: #57f2ff;">Local Wi-Fi Connection via WebRTC</div>
-    
+
     <div class="p2p-panel">
       <!-- HOST SECTION -->
       <div class="p2p-section">
@@ -810,9 +810,9 @@
         <div id="p2p-host-roster" class="p2p-roster"></div>
         <button class="btn p2p-start-btn" id="p2p-start-race-btn" type="button">Start Race</button>
       </div>
-      
+
       <div class="p2p-divider"></div>
-      
+
       <!-- JOIN SECTION -->
       <div class="p2p-section">
         <h3>Join a Race</h3>
@@ -823,7 +823,7 @@
         <div id="p2p-join-status" class="p2p-status">Enter code and click Join</div>
         <div id="p2p-join-roster" class="p2p-roster"></div>
       </div>
-      
+
       <!-- BACK BUTTON -->
       <button class="btn btn-alt" id="p2p-back-btn" style="background: rgba(255,255,255,0.06); color: #fff; margin-top: 10px;">Back to Menu</button>
     </div>
@@ -833,7 +833,7 @@
   <div id="select-screen" class="overlay hidden">
     <div class="title-text" style="font-size: clamp(32px, 5.5vw, 64px); margin-bottom: 4px;">Select Your Coder</div>
     <div class="subtitle" id="lobby-subtitle" style="margin-bottom: 8px; color: #7b75ff;">Lobby: Preparing Grid</div>
-    
+
     <div class="lobby-status-container">
       <div id="status-p1" class="p1-status">P1: Selecting</div>
       <div id="status-p2" class="p2-status" style="display: none;">P2: Selecting</div>
@@ -1172,7 +1172,6 @@ function triggerShootEffect(kart, item) {
     // Smoke & orange sparks behind kart
     if (game.particles) {
       game.particles.burst(kart.x - fx * 20, kart.y - fy * 20, "#ff9d00", 15, { spdMin: 1, spdMax: 3 });
-      // Add white/grey smoke
       for (let i = 0; i < 8; i++) {
         const ang = kart.heading + Math.PI + rand(-0.3, 0.3);
         const sp = rand(1, 2.5);
@@ -1229,7 +1228,6 @@ function triggerShootEffect(kart, item) {
     Sound.spatialTone(kart.x, kart.y, 180, 0.18, "triangle", 0.15, 60);
     Sound.spatialNoise(kart.x, kart.y, 0.15, 0.12, 300);
     if (game.particles) {
-      // Burst of red warning particles behind kart
       game.particles.burst(kart.x - fx * 20, kart.y - fy * 20, "#ff4d6d", 12, { spdMin: 1, spdMax: 2.5 });
     }
   } else if (item === "dossier") {
@@ -1670,13 +1668,6 @@ function angleDiff(a, b) {
   else if (d < -Math.PI) d += TAU;
   return d;
 }
-function pointSegDist(px, py, ax, ay, bx, by) {
-  const dx = bx - ax, dy = by - ay;
-  const len2 = dx * dx + dy * dy;
-  if (len2 < 1e-9) return dist(px, py, ax, ay);
-  const t = clamp(((px - ax) * dx + (py - ay) * dy) / len2, 0, 1);
-  return dist(px, py, ax + t * dx, ay + t * dy);
-}
 function pointSegProjection(px, py, ax, ay, bx, by) {
   const dx = bx - ax, dy = by - ay;
   const len2 = dx * dx + dy * dy;
@@ -1763,7 +1754,7 @@ const Sound = {
       osc.connect(g);
       g.connect(this.master);
     }
-    
+
     osc.start(t); osc.stop(t + dur + 0.02);
   },
 
@@ -1797,48 +1788,28 @@ const Sound = {
     src.start(t);
   },
 
-  spatialTone(x, y, freq, dur, type = "square", vol = 0.18, freqEnd, attack = 0.005) {
-    if (!game.player) {
-      this.tone(freq, dur, type, vol, freqEnd, attack, 0);
-      return;
-    }
+  _spatialParams(x, y, vol) {
+    if (!game.player) return { pan: 0, scaledVol: vol };
     const dx = x - game.player.x;
     const dy = y - game.player.y;
     const d = Math.hypot(dx, dy);
-    
-    // Relative panning: positive if to the right, negative if to the left.
-    // Project onto player's local right vector: rx = -sin(heading), ry = cos(heading)
     const rightX = -Math.sin(game.player.heading);
     const rightY = Math.cos(game.player.heading);
     const relX = dx * rightX + dy * rightY;
     const pan = Math.max(-1, Math.min(1, relX / 300));
-    
-    // Distance volume scaling: clamp(1 - d / 1200, 0, 1)
     const scaledVol = vol * Math.max(0, Math.min(1, 1 - d / 1200));
+    return { pan, scaledVol };
+  },
+
+  spatialTone(x, y, freq, dur, type = "square", vol = 0.18, freqEnd, attack = 0.005) {
+    const { pan, scaledVol } = this._spatialParams(x, y, vol);
     if (scaledVol <= 0.001) return;
-    
     this.tone(freq, dur, type, scaledVol, freqEnd, attack, pan);
   },
 
   spatialNoise(x, y, dur = 0.18, vol = 0.18, hpFreq = 600) {
-    if (!game.player) {
-      this.noise(dur, vol, hpFreq, 0);
-      return;
-    }
-    const dx = x - game.player.x;
-    const dy = y - game.player.y;
-    const d = Math.hypot(dx, dy);
-    
-    // Relative panning
-    const rightX = -Math.sin(game.player.heading);
-    const rightY = Math.cos(game.player.heading);
-    const relX = dx * rightX + dy * rightY;
-    const pan = Math.max(-1, Math.min(1, relX / 300));
-    
-    // Distance volume scaling
-    const scaledVol = vol * Math.max(0, Math.min(1, 1 - d / 1200));
+    const { pan, scaledVol } = this._spatialParams(x, y, vol);
     if (scaledVol <= 0.001) return;
-    
     this.noise(dur, scaledVol, hpFreq, pan);
   },
 
@@ -2535,13 +2506,13 @@ const Sound = {
       this.playBassNote(bassFreq, time, stepDur * (track === 3 ? 1.35 : track === 4 ? 2.8 : 1.05), step);
     }
 
-    // 2. Play melody note if any
+    // 2. Melody
     const melFreq = this.getMelodyNote(step);
     if (melFreq) {
       this.playMelodyNote(melFreq, time, stepDur * (track === 3 ? 2.6 : track === 4 ? 4.5 : 1.8));
     }
 
-    // 2b. Chords/arps: retro sparkle for chiptune, rounded stabs for house, pads for downtempo.
+    // 2b. Chords/arps/pads
     if (playChords) {
       if (track === 4 && bar < 6 && (stepInBar === 0)) {
         this.playDowntempoPad(this.getChordFreqs(track, bar), time, stepDur * 14);
@@ -2553,24 +2524,20 @@ const Sound = {
       }
     }
 
-    // 3. Play drum track with per-song grooves (reactive: drops out when losing badly).
+    // 3. Drums (reactive: drops out when losing badly)
     if (!playDrums) {
-      // No drums - eerie tension when in last place
+      // silence — tension
     } else if (track === 4) {
-      // Dirty downtempo groove - slow, head-nodding, tripped-out
       if (bar < 7) {
-        // Lazy kick on 1 and the "and" of 3
         if (stepInBar === 0 || stepInBar === 10) {
           this.playRetroKick(time, true);
         }
-        // Snare on 2 and 4 (ghost on offbeats)
         if (stepInBar === 4 || stepInBar === 12) {
           this.playRetroSnare(time, 0.85);
         }
         if (bar >= 2 && (stepInBar === 7 || stepInBar === 15)) {
           this.playRetroSnare(time, 0.25);
         }
-        // Sparse hats - triplet feel on certain bars
         if (bar % 2 === 0 && (stepInBar === 2 || stepInBar === 6 || stepInBar === 14)) {
           this.playRetroHiHat(time, false);
         }
@@ -2578,36 +2545,28 @@ const Sound = {
           this.playRetroHiHat(time, true);
         }
       }
-      // Bar 7: Slow build fill
       if (bar === 7 && stepInBar >= 8) {
         this.playRetroSnare(time, (stepInBar - 7) / 6.0);
       }
     } else if (track === 3) {
-      // Heavy modern four-on-the-floor with layered percussion
       if (bar !== 6) {
-        // Punchy kick on every beat
         if (stepInBar === 0 || stepInBar === 4 || stepInBar === 8 || stepInBar === 12) {
           this.playRetroKick(time, true);
         }
-        // Off-beat open hats
         if (fullDrums && (stepInBar === 2 || stepInBar === 6 || stepInBar === 10 || stepInBar === 14)) {
           this.playRetroHiHat(time, true);
         }
-        // Tight closed hats on all 16th notes for drive
         if (fullDrums && stepInBar % 2 === 1 && (bar >= 2)) {
           this.playRetroHiHat(time, false);
         }
-        // Clap/snare on 2 and 4
         if (stepInBar === 4 || stepInBar === 12) {
           this.playClap(time, 1.0);
           this.playRetroSnare(time, 0.6);
         }
-        // Ghost snares for groove
         if ((bar >= 4) && (stepInBar === 7 || stepInBar === 15)) {
           this.playRetroSnare(time, 0.3);
         }
       } else {
-        // Bar 6: Breakdown, sparse percussion
         if (stepInBar === 0 || stepInBar === 8) {
           this.playRetroKick(time, true);
         }
@@ -2615,7 +2574,6 @@ const Sound = {
           this.playClap(time, 0.7);
         }
       }
-      // Fill on bar 7
       if (bar === 7 && stepInBar >= 8) {
         this.playRetroSnare(time, (stepInBar - 7) / 8.0);
         if (stepInBar >= 12) this.playClap(time, (stepInBar - 11) / 5.0);
@@ -2820,7 +2778,7 @@ const Sound = {
     const track = this.trackIdx || 0;
     const isModern = track === 3;
     const isDowntempo = track === 4;
-    
+
     const subOsc = this.ctx.createOscillator();
     subOsc.type = (isModern || isDowntempo) ? "sine" : "triangle";
     subOsc.frequency.setValueAtTime(freq / 2, time);
@@ -4541,7 +4499,7 @@ class Track {
     ctx.setLineDash([30, 30]);
     ctx.lineDashOffset = -((time * 0.04) % 60);
     this.drawPath(ctx); ctx.stroke();
-    
+
     ctx.strokeStyle = "#a4ff80";
     ctx.lineDashOffset = -((time * 0.04) % 60) + 30;
     this.drawPath(ctx); ctx.stroke();
@@ -4560,7 +4518,7 @@ class Track {
         ctx.lineWidth = s.halfW * 2;
         ctx.beginPath();
         ctx.moveTo(s.a.x, s.a.y); ctx.lineTo(s.b.x, s.b.y); ctx.stroke();
-        
+
         // Wall edges where it's narrow - neon cyan boundary lines
         ctx.strokeStyle = "#00e5ff";
         ctx.lineWidth = (s.halfW + 2) * 2;
@@ -4862,11 +4820,11 @@ class Track {
     ctx.save();
     ctx.translate(px, py);
     ctx.rotate(ang);
-    
+
     // Digital glassmorphic road base band
     ctx.fillStyle = "rgba(123, 117, 255, 0.35)";
     ctx.fillRect(-12, -halfW, 24, halfW * 2);
-    
+
     // White / Cyan cyber checker
     const tiles = 12;
     const tileH = (halfW * 2) / tiles;
@@ -4876,7 +4834,7 @@ class Track {
       ctx.fillStyle = i % 2 === 0 ? "#7b75ff" : "#111";
       ctx.fillRect(0, -halfW + i * tileH, 12, tileH);
     }
-    
+
     // Arch supporting structures on the sides
     for (const side of [-1, 1]) {
       ctx.save();
@@ -4890,7 +4848,7 @@ class Track {
       ctx.strokeRect(-8, -8, 16, 16);
       ctx.restore();
     }
-    
+
     // Glassmorphic Overarching Sign Banner
     ctx.shadowBlur = 15;
     ctx.shadowColor = "#7b75ff";
@@ -4899,7 +4857,7 @@ class Track {
     ctx.lineWidth = 2.5;
     ctx.fillRect(-90, -halfW - 32, 180, 24);
     ctx.strokeRect(-90, -halfW - 32, 180, 24);
-    
+
     // Glowing Tech Text
     ctx.shadowBlur = 0;
     ctx.fillStyle = "#ffffff";
@@ -4907,7 +4865,7 @@ class Track {
     ctx.textAlign = "center";
     ctx.textBaseline = "middle";
     ctx.fillText("REGULAIDO CORE MAINPORT", 0, -halfW - 20);
-    
+
     ctx.restore();
   }
 
@@ -4948,18 +4906,18 @@ class Track {
       const sx = Math.sin(c.spin);
       ctx.save();
       ctx.translate(c.x, c.y);
-      
+
       // Glow
       ctx.shadowBlur = 15;
       ctx.shadowColor = "#fd9927";
-      
+
       // Outer neon code ring
       ctx.strokeStyle = "#fd9927";
       ctx.lineWidth = 1.5;
       ctx.beginPath();
       ctx.ellipse(0, 0, Math.abs(9 * sx), 9, 0, 0, TAU);
       ctx.stroke();
-      
+
       // Inner byte symbol
       ctx.fillStyle = "#ffffff";
       ctx.font = "bold 9px monospace";
@@ -4969,7 +4927,7 @@ class Track {
       ctx.scale(sx, 1);
       ctx.fillText("Ø", 0, 0);
       ctx.restore();
-      
+
       ctx.restore();
     }
 
@@ -4978,32 +4936,29 @@ class Track {
       if (!b.active) continue;
       ctx.save();
       ctx.translate(b.x, b.y);
-      
-      // Rotate based on time and spin
+
       const rot = b.spin + time * 0.002;
       const pulse = 0.8 + 0.2 * Math.sin(time * 0.008);
       const sz = 15 * pulse;
-      
+
       // Pulsing Neon glow
       ctx.shadowBlur = 20 * pulse;
       ctx.shadowColor = "#7b75ff";
       ctx.strokeStyle = "#7b75ff";
       ctx.lineWidth = 1.5;
-      
-      // Draw outer cube (wireframe)
+
       ctx.save();
       ctx.rotate(rot);
       ctx.strokeRect(-sz, -sz, sz * 2, sz * 2);
       ctx.restore();
-      
-      // Draw inner cube (wireframe, rotating opposite)
+
       ctx.strokeStyle = "#ff4d6d";
       ctx.shadowColor = "#ff4d6d";
       ctx.save();
       ctx.rotate(-rot * 0.7);
       ctx.strokeRect(-sz * 0.5, -sz * 0.5, sz, sz);
       ctx.restore();
-      
+
       // Neon question mark in the dead center
       ctx.shadowBlur = 0;
       ctx.fillStyle = "#ffffff";
@@ -5011,7 +4966,7 @@ class Track {
       ctx.textAlign = "center";
       ctx.textBaseline = "middle";
       ctx.fillText("?", 0, 0);
-      
+
       ctx.restore();
     }
   }
@@ -5100,36 +5055,34 @@ class MergeConflict {
     this.spin = Math.random() * Math.PI * 2;
     this.active = true;
   }
-  
+
   update(dt) {
     this.spin += 0.08 * dt;
   }
-  
+
   draw(ctx, time) {
     ctx.save();
     ctx.translate(this.x, this.y);
     ctx.rotate(this.spin);
-    
-    // Draw neon red square with "Err" inside
+
     ctx.fillStyle = "rgba(255, 30, 80, 0.25)";
     ctx.strokeStyle = "#ff4d6d";
     ctx.lineWidth = 2.5;
     ctx.shadowColor = "#ff4d6d";
     ctx.shadowBlur = 10;
-    
+
     ctx.beginPath();
     ctx.rect(-14, -14, 28, 28);
     ctx.fill();
     ctx.stroke();
-    
-    // Draw neon text
+
     ctx.shadowBlur = 0;
     ctx.fillStyle = "#fff";
     ctx.font = "bold 11px monospace";
     ctx.textAlign = "center";
     ctx.textBaseline = "middle";
     ctx.fillText("Err", 0, 0);
-    
+
     ctx.restore();
   }
 }
@@ -5472,7 +5425,7 @@ class Kart {
     const type = this.itemSlot;
     this.itemState = "empty";
     this.itemSlot = null;
-    
+
     // Play localized visual feedback and spatialized sound!
     triggerShootEffect(this, type);
 
@@ -5547,20 +5500,20 @@ class Kart {
     if (this.spinoutTimer > 0) {
       this.spinoutTimer -= dt;
       this.spinAngle += 0.3 * dt;
-      
+
       this.vx *= Math.pow(0.92, dt);
       this.vy *= Math.pow(0.92, dt);
-      
+
       this.x += this.vx * dt;
       this.y += this.vy * dt;
-      
+
       // Decay timers
       if (this.boostTimer > 0) this.boostTimer -= dt;
       if (this.shieldTimer > 0) this.shieldTimer -= dt;
       if (this.handlingTimer > 0) this.handlingTimer -= dt;
       if (this.invuln > 0) this.invuln -= dt;
       if (this.draftBoostTimer > 0) this.draftBoostTimer -= dt;
-      
+
       // World boundary clip while spinning
       const c = track.closestSegment(this.x, this.y);
       const seg = track.segments[c.idx];
@@ -5575,7 +5528,7 @@ class Kart {
       }
       this.x = clamp(this.x, 30, WORLD_W - 30);
       this.y = clamp(this.y, 30, WORLD_H - 30);
-      
+
       return { drifting: false, onSurface };
     }
 
@@ -5644,7 +5597,7 @@ class Kart {
         }
         this.driftCharge += chargeAmt;
       }
-      
+
       // Drift sparks generation from rear wheels
       if (Math.random() < 0.35 * dt) {
         let sparkColor = null;
@@ -5681,7 +5634,7 @@ class Kart {
         let boostTime = 0;
         let text = "";
         let color = "";
-        
+
         if (this.driftCharge >= 100) {
           boostTime = 84; // 1.4s (Tier 3)
           text = "ULTRA TURBO!";
@@ -5696,10 +5649,10 @@ class Kart {
           text = "MINI TURBO";
           color = "#00e5ff"; // Cyan/Blue
         }
-        
+
         this.boostTimer = Math.max(this.boostTimer, boostTime);
         triggerQuote(this, "boost");
-        
+
         // Add floaty text particle
         game.particles.add({
           type: "text",
@@ -5721,7 +5674,7 @@ class Kart {
           game.shake = Math.max(game.shake, 4);
           Sound.tone(550, 0.1, "sawtooth", 0.15, 80);
         }
-        
+
         // Generate smoke puffs on drift release snapback
         for (let i = 0; i < 8; i++) {
           const ang = Math.random() * TAU;
@@ -5768,7 +5721,7 @@ class Kart {
       const push = c.dist - wallLimit;
       this.x -= nx * push;
       this.y -= ny * push;
-      
+
       // Bounce / recoil: elastic bounce off the wall normal
       const dot = this.vx * nx + this.vy * ny;
       if (dot > 0) {
@@ -5783,7 +5736,7 @@ class Kart {
         this.vx -= nx * 0.8 * dt;
         this.vy -= ny * 0.8 * dt;
       }
-      
+
       if (performance.now() - this.lastBumpAt > 1100) {
         triggerQuote(this, "crash");
         this.lastBumpAt = performance.now();
@@ -5797,7 +5750,7 @@ class Kart {
     // Decay timers & roulette timer
     if (this.boostTimer > 0) {
       this.boostTimer -= dt;
-      
+
       // Generate pink exhaust flame trails if ultra boost is active
       if (this.ultraBoostActive) {
         if (Math.random() < 0.8 * dt) {
@@ -5817,7 +5770,7 @@ class Kart {
     } else {
       this.ultraBoostActive = false;
     }
-    
+
     if (this.shieldTimer > 0) this.shieldTimer -= dt;
     if (this.handlingTimer > 0) this.handlingTimer -= dt;
     if (this.invuln > 0) this.invuln -= dt;
@@ -5834,21 +5787,21 @@ class Kart {
         const angleToK = Math.atan2(dy, dx);
         const headingDiff = Math.abs(angleDiff(this.heading, angleToK));
         const directionDiff = Math.abs(angleDiff(this.heading, k.heading));
-        
+
         if (headingDiff < 0.22 && directionDiff < 0.45) { // <12.5 deg and <25 deg
           isDraftingNow = true;
           break;
         }
       }
     }
-    
+
     if (isDraftingNow) {
       this.draftTimer += dt;
       if (this.draftTimer >= 45) {
         this.draftTimer = 0;
         this.draftBoostTimer = 60;
         this.boostTimer = Math.max(this.boostTimer, 45); // short boost surge
-        
+
         // Floaty SLIPSTREAM! text
         game.particles.add({
           type: "text",
@@ -5862,13 +5815,13 @@ class Kart {
           color: "#00e5ff", // Electric Blue
           text: "SLIPSTREAM!"
         });
-        
+
         if (this.isPlayer) {
           Sound.boost();
           game.flash = Math.max(game.flash, 4);
         }
       }
-      
+
       // Wind-tunnel blue overlay trails
       if (this.draftTimer > 15 && Math.random() < 0.5 * dt) {
         const side = Math.random() < 0.5 ? -1 : 1;
@@ -5893,7 +5846,6 @@ class Kart {
       this.draftBoostTimer -= dt;
     }
 
-    // Update item roulette timer
     if (this.itemState === "rolling") {
       this.itemRollTimer -= dt;
       if (this.itemRollTimer <= 0) {
@@ -5908,7 +5860,6 @@ class Kart {
     return { drifting, onSurface };
   }
 
-  // Draw kart (top-down)
   draw(ctx, time) {
     ctx.save();
     ctx.translate(this.x, this.y);
@@ -6073,7 +6024,7 @@ class PlayerKart extends Kart {
         this.offRoadAudioTimer = rand(8, 16);
         Sound.spatialNoise(this.x, this.y, 0.10, 0.04, 700);
       }
-      
+
       if (Math.random() < 0.4 * dt) {
         const fx = Math.cos(this.heading), fy = Math.sin(this.heading);
         const lx = -fy, ly = fx;
@@ -6206,14 +6157,14 @@ class AIKart extends Kart {
     const lookDist = 160;
     const fx = Math.cos(this.heading), fy = Math.sin(this.heading);
     const lx = -fy, ly = fx;
-    
+
     const obstacles = [
       ...(game.hazards || []).map(h => ({ x: h.x, y: h.y, r: h.r || 15, isHazard: true })),
       ...(game.track.movingObjects || []).map(o => ({ x: o.x, y: o.y, r: o.r || 24, isHazard: true })),
       ...(game.track.regulatoryDragon ? [{ x: game.track.regulatoryDragon.x, y: game.track.regulatoryDragon.y, r: game.track.regulatoryDragon.r || 70, isHazard: true }] : []),
       ...getActiveKarts().filter(k => k !== this).map(k => ({ x: k.x, y: k.y, r: 18, isHazard: false }))
     ];
-    
+
     for (const obs of obstacles) {
       const d = dist(this.x, this.y, obs.x, obs.y);
       if (d < lookDist && d > 10) {
@@ -6221,14 +6172,14 @@ class AIKart extends Kart {
         const ry = obs.y - this.y;
         const localForward = rx * fx + ry * fy;
         const localLateral = rx * lx + ry * ly;
-        
+
         if (localForward > 5 && localForward < lookDist) {
           const clearDist = obs.r + 14;
           if (Math.abs(localLateral) < clearDist) {
             const dodgeDir = localLateral >= 0 ? -1 : 1;
             const weight = (1 - localForward / lookDist) * 0.55;
             steerAdj += dodgeDir * weight;
-            
+
             if (localForward < 60 && Math.abs(localLateral) < obs.r) {
               brakeTarget = true;
             }
@@ -6261,7 +6212,7 @@ class AIKart extends Kart {
     if (this.itemState === "active" && this.itemSlot) {
       let shouldUse = false;
       const rank = rankAll().indexOf(this) + 1;
-      
+
       if (this.itemSlot === "conflict") {
         const rearLookDist = 180;
         let playerBehind = false;
@@ -6317,7 +6268,7 @@ class AIKart extends Kart {
       } else if (this.itemSlot === "hotfix") {
         shouldUse = true;
       }
-      
+
       if (shouldUse) {
         this.useItem();
       }
@@ -6330,7 +6281,7 @@ class AIKart extends Kart {
     }
     const myProgress = progressValue(this);
     const diffProgress = leadHumanProgress - myProgress;
-    
+
     let rubberbandSpeedMult = 1.0;
     if (diffProgress > 0) {
       rubberbandSpeedMult = 1.0 + Math.min(0.22, diffProgress * 0.07);
@@ -6356,7 +6307,7 @@ class AIKart extends Kart {
         this.offRoadAudioTimer = rand(8, 16);
         Sound.spatialNoise(this.x, this.y, 0.10, 0.04, 700);
       }
-      
+
       if (Math.random() < 0.4 * dt) {
         const fx = Math.cos(this.heading), fy = Math.sin(this.heading);
         const lx = -fy, ly = fx;
@@ -6524,7 +6475,7 @@ function checkMultiplayerSelectFinish() {
             buildRace();
             startCountdown();
             Sound.startEngine(1);
-            
+
             sendP2pMessage({
               type: "start_race",
               hostCharIdx: game.selectedCharIdx,
@@ -6554,7 +6505,7 @@ function updateSelectionHighlight() {
   const cards = document.querySelectorAll(".char-card");
   cards.forEach((card, idx) => {
     card.classList.remove("selected", "selected-p1", "selected-p2", "selected-both");
-    
+
     // Remove any previous badges
     const badges = card.querySelectorAll(".p-badge");
     badges.forEach(b => b.remove());
@@ -6562,29 +6513,29 @@ function updateSelectionHighlight() {
     if (game.multiplayer) {
       const isP1 = (idx === game.selectedCharIdx);
       const isP2 = (idx === game.selectedCharIdx2);
-      
+
       if (isP1 && isP2) {
         card.classList.add("selected-both");
-        
+
         const b1 = document.createElement("div");
         b1.className = "p-badge p1";
         b1.innerText = game.p1Locked ? "P1 READY" : "PLAYER 1";
         card.appendChild(b1);
-        
+
         const b2 = document.createElement("div");
         b2.className = "p-badge p2";
         b2.innerText = game.p2Locked ? "P2 READY" : "PLAYER 2";
         card.appendChild(b2);
       } else if (isP1) {
         card.classList.add("selected-p1");
-        
+
         const b1 = document.createElement("div");
         b1.className = "p-badge p1";
         b1.innerText = game.p1Locked ? "P1 READY" : "PLAYER 1";
         card.appendChild(b1);
       } else if (isP2) {
         card.classList.add("selected-p2");
-        
+
         const b2 = document.createElement("div");
         b2.className = "p-badge p2";
         b2.innerText = game.p2Locked ? "P2 READY" : "PLAYER 2";
@@ -6593,7 +6544,7 @@ function updateSelectionHighlight() {
     } else {
       if (idx === game.selectedCharIdx) {
         card.classList.add("selected");
-        
+
         const b1 = document.createElement("div");
         b1.className = "p-badge p1";
         b1.innerText = "PLAYER 1";
@@ -6606,7 +6557,7 @@ function updateSelectionHighlight() {
   if (game.multiplayer) {
     const s1 = document.getElementById("status-p1");
     const s2 = document.getElementById("status-p2");
-    
+
     if (game.p1Locked) {
       s1.innerText = "P1: READY!";
       s1.className = "p1-status ready";
@@ -6614,7 +6565,7 @@ function updateSelectionHighlight() {
       s1.innerText = "P1: Selecting...";
       s1.className = "p1-status selecting";
     }
-    
+
     if (game.p2Locked) {
       s2.innerText = "P2: READY!";
       s2.className = "p2-status ready";
@@ -6630,7 +6581,7 @@ function showSelectScreen() {
   selectScreen.classList.remove("hidden");
   game.state = STATE.SELECT;
   game.selectedCharIdx = game.selectedCharIdx || 0;
-  
+
   if (game.multiplayer) {
     game.selectedCharIdx2 = game.selectedCharIdx2 !== undefined ? game.selectedCharIdx2 : 1;
     game.p1Locked = false;
@@ -6656,7 +6607,7 @@ function showSelectScreen() {
     document.getElementById("lobby-hint").innerText = "Press Space or Enter to Drive!";
     driveBtn.style.display = "block";
   }
-  
+
   renderSelectScreen();
   renderMapSelect();
 }
@@ -6937,7 +6888,7 @@ function buildRace() {
     game.totalRacers = racePlayers.length + game.ais.length;
   } else if (game.multiplayer) {
     const player2Char = CHARACTERS[game.selectedCharIdx2 !== undefined ? game.selectedCharIdx2 : 1];
-    
+
     // Position 0 (Player 1)
     const p1x = sx + fx * 12 + lx * -36;
     const p1y = sy + fy * 12 + ly * -36;
@@ -7017,7 +6968,7 @@ function finishRace() {
   if (game.state === STATE.FINISHED) return;
   game.state = STATE.FINISHED;
   game.raceFinishedAt = performance.now();
-  
+
   // Stop continuous engine, drift, and rumble sounds
   Sound.stopAllEngines();
   Sound.stopAllDriftSqueals();
@@ -7220,12 +7171,12 @@ function checkItems(kart) {
     if (dist(kart.x, kart.y, b.x, b.y) < 24) {
       b.active = false;
       b.respawn = 240;
-      
+
       // Mario Kart-style Item Slot Roulette trigger
       if (kart.itemState === "empty") {
         kart.itemState = "rolling";
         kart.itemRollTimer = 45; // 0.75 seconds to shuffle and decide
-        
+
         if (kart.isPlayer) {
           Sound.itembox();
           game.particles.burst(b.x, b.y, "#ff66cc", 18, { type: "spark", spdMin: 2, spdMax: 5 });
@@ -7547,7 +7498,7 @@ function update(dt, time) {
     if (game.hazards) {
       for (let i = game.hazards.length - 1; i >= 0; i--) {
         const h = game.hazards[i];
-        
+
         if (h instanceof DossierProjectile) {
           h.update(dt, game.track);
         } else {
@@ -7558,12 +7509,12 @@ function update(dt, time) {
           game.hazards.splice(i, 1);
           continue;
         }
-        
+
         for (const kart of activeKarts) {
           if (h instanceof DossierProjectile && h.owner === kart && h.ignoreOwnerTimer > 0) {
             continue;
           }
-          
+
           if (!kart.eliminated && kart.spinoutTimer <= 0 && dist(kart.x, kart.y, h.x, h.y) < 24) {
             game.hazards.splice(i, 1);
             const isDossier = (h instanceof DossierProjectile);
@@ -7801,7 +7752,7 @@ function update(dt, time) {
       Sound.stopDriftSqueal(2);
       Sound.stopEngine(2);
     }
-    
+
     if (game.p2pMode) {
       if (game.p2pRole === "host") {
         sendHostSync();
@@ -7818,7 +7769,7 @@ function update(dt, time) {
     const followLerp = 1 - Math.pow(0.92, dt);
     game.cam.x = lerp(game.cam.x, lookX, followLerp);
     game.cam.y = lerp(game.cam.y, lookY, followLerp);
-    
+
     const sp = game.player.speed();
     const target = clamp(1.05 - sp * 0.025, 0.85, 1.05);
     game.cam.scale = lerp(game.cam.scale, target, 1 - Math.pow(0.92, dt));
@@ -7860,7 +7811,7 @@ function drawWorld(pKart, left, top, width, height, time, isP2) {
   const followLerp = 1 - Math.pow(0.92, dt);
   pKart.camX = lerp(pKart.camX, lookX, followLerp);
   pKart.camY = lerp(pKart.camY, lookY, followLerp);
-  
+
   const sp = pKart.speed();
   const targetScale = clamp(1.05 - sp * 0.025, 0.85, 1.05);
   pKart.camScale = lerp(pKart.camScale, targetScale, followLerp);
@@ -8275,7 +8226,7 @@ function draw(time) {
     // 3. Draw Split-Screen Divider
     ctx.fillStyle = "rgba(8, 6, 26, 0.75)";
     ctx.fillRect(VIEW_W / 2 - 3, 0, 6, VIEW_H);
-    
+
     const grad = ctx.createLinearGradient(0, 0, 0, VIEW_H);
     grad.addColorStop(0, "#7b75ff");
     grad.addColorStop(0.5, "#ff4d6d");
@@ -8318,22 +8269,22 @@ function draw(time) {
 function drawFinishBanner() {
   ctx.save();
   ctx.translate(VIEW_W / 2, VIEW_H / 2);
-  
+
   // Pulsing scale based on time
   const t = performance.now() * 0.005;
   const scale = 1.0 + Math.sin(t) * 0.06;
   ctx.scale(scale, scale);
-  
+
   // Glassmorphic backing bar
   ctx.fillStyle = "rgba(10, 8, 30, 0.72)";
   ctx.strokeStyle = "rgba(255, 255, 255, 0.16)";
   ctx.lineWidth = 2.5;
-  
+
   const bw = 550, bh = 110;
   roundRect(ctx, -bw / 2, -bh / 2, bw, bh, 18);
   ctx.fill();
   ctx.stroke();
-  
+
   // Glowing neon yellow/orange text with deep drop-shadow blur
   ctx.font = "bold 72px sans-serif";
   ctx.textAlign = "center";
@@ -8342,7 +8293,7 @@ function drawFinishBanner() {
   ctx.shadowBlur = 30;
   ctx.shadowColor = "#ffd86b";
   ctx.fillText("FINISH!", 0, 0);
-  
+
   ctx.restore();
 }
 
@@ -8388,7 +8339,7 @@ function drawHUD(time) {
     ctx.font = "11px sans-serif";
     ctx.textAlign = "left"; ctx.textBaseline = "top";
     ctx.fillText("COINS", 18, 14);
-    
+
     // Coin icon
     ctx.fillStyle = "#ffd86b";
     ctx.beginPath(); ctx.arc(28, 42, 9, 0, TAU); ctx.fill();
@@ -8429,7 +8380,7 @@ function drawHUD(time) {
   // Regulaido Autopilot Active Watermark Panel (top-center, beautifully glassmorphic)
   const wmW = 200, wmH = 24;
   const wmX = (VIEW_W - wmW) / 2, wmY = 20;
-  
+
   ctx.save();
   ctx.shadowBlur = 8;
   ctx.shadowColor = "rgba(123, 117, 255, 0.4)";
@@ -8441,7 +8392,7 @@ function drawHUD(time) {
   ctx.fill();
   ctx.stroke();
   ctx.restore();
-  
+
   ctx.fillStyle = "#ffffff";
   ctx.font = "bold 9px monospace";
   ctx.textAlign = "center";
@@ -8491,7 +8442,7 @@ function drawItemSlot(ctx, x, y, size, kart, time) {
     drawItemIcon(ctx, size / 2, size / 2, size * 0.55, item, time);
   } else if (kart.itemState === "active" && kart.itemSlot) {
     drawItemIcon(ctx, size / 2, size / 2, size * 0.6, kart.itemSlot, time);
-    
+
     const pulse = 0.5 + 0.5 * Math.sin(time * 0.015);
     ctx.strokeStyle = `rgba(255, 216, 107, ${pulse})`;
     ctx.lineWidth = 2.5;
@@ -8530,7 +8481,7 @@ function drawItemIcon(ctx, cx, cy, sz, item, time) {
     ctx.lineWidth = 2.5;
     ctx.shadowBlur = 8;
     ctx.shadowColor = "#57f2ff";
-    
+
     ctx.beginPath();
     ctx.moveTo(0, -sz / 2);
     ctx.lineTo(sz / 2 - 2, -sz / 4);
@@ -8546,11 +8497,11 @@ function drawItemIcon(ctx, cx, cy, sz, item, time) {
     ctx.shadowColor = "#a4ff80";
     ctx.save();
     ctx.rotate(time * 0.003);
-    
+
     ctx.beginPath();
     ctx.arc(0, 0, sz / 3, 0, TAU);
     ctx.stroke();
-    
+
     ctx.lineWidth = 3;
     for (let i = 0; i < 6; i++) {
       ctx.rotate(TAU / 6);
@@ -8566,7 +8517,7 @@ function drawItemIcon(ctx, cx, cy, sz, item, time) {
     ctx.lineWidth = 2;
     ctx.shadowBlur = 8;
     ctx.shadowColor = "#ff4d6d";
-    
+
     ctx.beginPath();
     ctx.rect(-sz / 2, -sz / 2, sz, sz);
     ctx.fill();
@@ -8610,17 +8561,17 @@ function drawItemIcon(ctx, cx, cy, sz, item, time) {
     ctx.lineWidth = 2.5;
     ctx.shadowBlur = 8;
     ctx.shadowColor = "#ff3366";
-    
+
     // Draw concentric antenna waves
     ctx.beginPath();
     ctx.arc(0, sz * 0.15, sz * 0.12, 0, TAU);
     ctx.fillStyle = "#ff3366";
     ctx.fill();
-    
+
     ctx.beginPath();
     ctx.arc(0, sz * 0.15, sz * 0.3, Math.PI * 1.2, Math.PI * 1.8);
     ctx.stroke();
-    
+
     ctx.beginPath();
     ctx.arc(0, sz * 0.15, sz * 0.52, Math.PI * 1.25, Math.PI * 1.75);
     ctx.stroke();
@@ -8629,24 +8580,24 @@ function drawItemIcon(ctx, cx, cy, sz, item, time) {
     ctx.lineWidth = 2.5;
     ctx.shadowBlur = 8;
     ctx.shadowColor = "#39ff14";
-    
+
     // Draw bracket < > with a center pull arrow
     ctx.beginPath();
     ctx.moveTo(-sz * 0.35, -sz * 0.3);
     ctx.lineTo(-sz * 0.5, 0);
     ctx.lineTo(-sz * 0.35, sz * 0.3);
-    
+
     ctx.moveTo(sz * 0.35, -sz * 0.3);
     ctx.lineTo(sz * 0.5, 0);
     ctx.lineTo(sz * 0.35, sz * 0.3);
     ctx.stroke();
-    
+
     // Center arrow pointing down/in
     ctx.beginPath();
     ctx.moveTo(0, -sz * 0.25);
     ctx.lineTo(0, sz * 0.25);
     ctx.stroke();
-    
+
     ctx.fillStyle = "#39ff14";
     ctx.beginPath();
     ctx.moveTo(-sz * 0.15, sz * 0.08);
@@ -8694,7 +8645,7 @@ function drawHUDMultiplayer(time) {
     ctx.fillStyle = "#a8acd0";
     ctx.font = "10px sans-serif";
     ctx.textAlign = "left"; ctx.textBaseline = "top";
-    
+
     if (isDragonEscape()) { ctx.fillText("DIST", 12, 10); ctx.fillStyle = "#fff"; ctx.font = "bold 18px 'SFMono-Regular', Consolas, monospace"; ctx.fillText(`${((game.player.lap * game.track.n + game.player.checkpointsThisLap) * 0.1)}km`, 12, 22); }
     else { ctx.fillText("LAP", 12, 10); ctx.fillStyle = "#fff"; ctx.font = "bold 20px sans-serif"; ctx.fillText(`${Math.min(game.player.lap + 1, TOTAL_LAPS)} / ${TOTAL_LAPS}`, 12, 22); }
 
@@ -8716,7 +8667,7 @@ function drawHUDMultiplayer(time) {
     ctx.font = "10px sans-serif";
     ctx.fillText("ITEM", 110, 54);
   });
-  
+
   drawItemSlot(ctx, 120, 68, 48, game.player, time);
   drawSpeedo(15, VIEW_H - 135, 120, game.player);
 
@@ -8725,7 +8676,7 @@ function drawHUDMultiplayer(time) {
     ctx.fillStyle = "#a8acd0";
     ctx.font = "10px sans-serif";
     ctx.textAlign = "left"; ctx.textBaseline = "top";
-    
+
     if (isDragonEscape()) { ctx.fillText("DIST", 12, 10); ctx.fillStyle = "#fff"; ctx.font = "bold 18px 'SFMono-Regular', Consolas, monospace"; ctx.fillText(`${((game.player2.lap * game.track.n + game.player2.checkpointsThisLap) * 0.1)}km`, 12, 22); }
     else { ctx.fillText("LAP", 12, 10); ctx.fillStyle = "#fff"; ctx.font = "bold 20px sans-serif"; ctx.fillText(`${Math.min(game.player2.lap + 1, TOTAL_LAPS)} / ${TOTAL_LAPS}`, 12, 22); }
 
@@ -8784,7 +8735,7 @@ function drawHUDMultiplayer(time) {
   // Regulaido Autopilot Active Watermark (top-center below split border)
   const wmW = 180, wmH = 20;
   const wmX = (VIEW_W - wmW) / 2, wmY = 40;
-  
+
   ctx.save();
   ctx.shadowBlur = 6;
   ctx.shadowColor = "rgba(123, 117, 255, 0.3)";
@@ -8796,7 +8747,7 @@ function drawHUDMultiplayer(time) {
   ctx.fill();
   ctx.stroke();
   ctx.restore();
-  
+
   ctx.fillStyle = "#a4ff80"; // Mint Green pulsing dot
   const dotPulse = Math.sin(time * 0.005) > 0 ? "●" : " ";
   ctx.font = "bold 9px monospace";
@@ -9000,12 +8951,6 @@ function formatTime(t) {
   return `${pad2(m)}:${pad2(s)}.${pad2(ms)}`;
 }
 function pad2(n) { return n < 10 ? "0" + n : "" + n; }
-function resultTime(k, fallback = "DNF") {
-  if (!k) return fallback;
-  if (k.eliminated) return "ELIMINATED";
-  if (k.finished) return formatTime(k.finishTime);
-  return fallback;
-}
 function ordinal(n) {
   const s = ["th", "st", "nd", "rd"], v = n % 100;
   return n + (s[(v - 20) % 10] || s[v] || s[0]);
@@ -9036,7 +8981,7 @@ function roundRect(c, x, y, w, h, r) {
    ============================================================ */
 function showFinishScreen() {
   const ranking = game.finalRanking || rankAll();
-  
+
   if (game.multiplayer && game.player2) {
     if (isDragonEscape()) {
       // Dragon survival multiplayer results
@@ -9189,7 +9134,7 @@ function showFinishScreen() {
       finishResults.innerHTML = html;
     }
   }
-  
+
   finishScreen.classList.remove("hidden");
 }
 
@@ -9303,29 +9248,29 @@ p2pHostBtn.addEventListener("click", () => {
   Sound.ensure(); Sound.resume();
   p2pHostStatus.innerText = "Loading network library...";
   p2pHostStatus.className = "p2p-status";
-  
+
   loadPeerJS(() => {
     p2pHostStatus.innerText = "Connecting to matchmaking...";
     const code = generateLobbyCode();
-    
+
     try {
       if (peer) {
         try { peer.destroy(); } catch(e) {}
       }
       peer = new Peer("TKD-" + code);
-      
+
       peer.on("open", (id) => {
         p2pHostStatus.innerText = "Lobby active. Waiting for players...";
         p2pHostStatus.className = "p2p-status ready";
         p2pMyCode.innerText = code;
         p2pCodeBox.style.display = "block";
-        
+
         game.p2pMode = true;
         game.p2pRole = "host";
         game.multiplayer = true;
         ensureHostP2pPlayer();
       });
-      
+
       peer.on("connection", (conn) => {
         conn.on("open", () => {
           const player = addP2pGuest(conn);
@@ -9351,7 +9296,7 @@ p2pHostBtn.addEventListener("click", () => {
           p2pHostStatus.className = "p2p-status error";
         });
       });
-      
+
       peer.on("error", (err) => {
         if (err.type === "unavailable-id") {
           p2pHostBtn.click();
@@ -9377,7 +9322,7 @@ p2pJoinBtn.addEventListener("click", () => {
   }
   p2pJoinStatus.innerText = "Loading network library...";
   p2pJoinStatus.className = "p2p-status";
-  
+
   loadPeerJS(() => {
     p2pJoinStatus.innerText = "Connecting to matchmaking...";
     try {
@@ -9385,12 +9330,12 @@ p2pJoinBtn.addEventListener("click", () => {
         try { peer.destroy(); } catch(e) {}
       }
       peer = new Peer();
-      
+
       peer.on("open", (id) => {
         p2pJoinStatus.innerText = "Connecting to lobby " + rawCode + "...";
         const conn = peer.connect("TKD-" + rawCode);
         game.p2pConn = conn;
-        
+
         conn.on("open", () => {
           p2pJoinStatus.innerText = "Connected! Joining lobby...";
           p2pJoinStatus.className = "p2p-status ready";
@@ -9409,7 +9354,7 @@ p2pJoinBtn.addEventListener("click", () => {
           p2pJoinStatus.className = "p2p-status error";
         });
       });
-      
+
       peer.on("error", (err) => {
         p2pJoinStatus.innerText = "Matchmaking error: " + err.type;
         p2pJoinStatus.className = "p2p-status error";
@@ -9720,7 +9665,7 @@ function handleP2pDisconnect() {
     try { peer.destroy(); } catch(e) {}
     peer = null;
   }
-  
+
   game.p2pMode = false;
   game.p2pRole = null;
   game.p2pPlayers = [];
@@ -9729,7 +9674,7 @@ function handleP2pDisconnect() {
   game.multiplayer = false;
   game.p1Locked = false;
   game.p2Locked = false;
-  
+
   p2pHostStatus.innerText = "Click Create Lobby to generate a code";
   p2pHostStatus.className = "p2p-status";
   p2pCodeBox.style.display = "none";
@@ -9737,11 +9682,11 @@ function handleP2pDisconnect() {
   p2pHostRoster.innerHTML = "";
   p2pJoinRoster.innerHTML = "";
   p2pStartRaceBtn.style.display = "none";
-  
+
   p2pJoinInput.value = "";
   p2pJoinStatus.innerText = "Enter code and click Join";
   p2pJoinStatus.className = "p2p-status";
-  
+
   if (game.state === STATE.RACING || game.state === STATE.COUNTDOWN) {
     Sound.stopAllEngines();
     Sound.stopAllDriftSqueals();
@@ -9811,7 +9756,7 @@ function handleP2pData(data, sourceConn = null) {
       game.selectedCharIdx2 = data.hostCharIdx;
     }
     game.selectedMapIdx = data.mapIdx !== undefined ? data.mapIdx : 0;
-    
+
     hideAll();
     buildRace();
     startCountdown();
