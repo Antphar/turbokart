@@ -54,6 +54,7 @@ Every single sound effect and music track is synthesized on-the-fly using the br
 * Pulsing glassmorphic holographic data pillars replacing standard trees.
 * Glowing cyan boundaries with scrolling flow arrows on deep indigo highways.
 * Glowing "FINISH!" banners and confetti explosions.
+* **Black Ice Data Vault**: A complex vault-breach circuit with narrow corridors, switchbacks, and moving firewall gates.
 
 ---
 

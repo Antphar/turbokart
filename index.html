@@ -2922,6 +2922,56 @@ const MAPS = [
     boostPadSegs: [1, 4, 5],
     itemBoxSegs: [0, 2, 3, 6],
     desc: "A giant wide-lane speed ring with gentle sweeps designed for massive drifts and continuous boost chaining."
+  },
+  {
+    name: "Black Ice Data Vault",
+    id: "black_ice_data_vault",
+    worldW: 4200,
+    worldH: 2800,
+    waypoints: [
+      { x:  520, y: 2280 },
+      { x: 1260, y: 2320 },
+      { x: 1900, y: 2140 },
+      { x: 2200, y: 1840 },
+      { x: 1640, y: 1600 },
+      { x:  900, y: 1660 },
+      { x:  620, y: 1320 },
+      { x:  820, y:  900 },
+      { x: 1420, y:  720 },
+      { x: 2020, y:  920 },
+      { x: 2460, y:  560 },
+      { x: 3280, y:  520 },
+      { x: 3720, y:  900 },
+      { x: 3500, y: 1320 },
+      { x: 2840, y: 1360 },
+      { x: 2500, y: 1660 },
+      { x: 3120, y: 2000 },
+      { x: 3740, y: 2220 },
+      { x: 3380, y: 2580 },
+      { x: 2360, y: 2460 },
+      { x: 1600, y: 2580 },
+      { x:  880, y: 2540 },
+    ],
+    roadHalfBase: 88,
+    segWidth: {
+      3: 0.68,
+      4: 0.72,
+      6: 0.74,
+      9: 0.70,
+      13: 0.66,
+      15: 0.78,
+      18: 0.72
+    },
+    boostPadSegs: [1, 7, 11, 16, 19],
+    itemBoxSegs: [2, 5, 8, 12, 15, 20],
+    movingObjects: [
+      { seg: 3, t: 0.48, amp: 85, speed: 1.15, phase: 0.0, color: "#ff4d6d" },
+      { seg: 6, t: 0.56, amp: 72, speed: 1.35, phase: 1.7, color: "#57f2ff" },
+      { seg: 9, t: 0.50, amp: 78, speed: 1.05, phase: 3.2, color: "#fd9927" },
+      { seg: 13, t: 0.58, amp: 92, speed: 1.25, phase: 4.4, color: "#a4ff80" },
+      { seg: 18, t: 0.44, amp: 80, speed: 1.55, phase: 2.2, color: "#bd57ff" }
+    ],
+    desc: "A brutal vault breach with hairpins, split-flow switchbacks, narrow ice corridors, and moving firewall gates."
   }
 ];
 
@@ -2960,6 +3010,7 @@ class Track {
     this.coins = this._placeCoins();
     this.boostPads = this._placeBoostPads(mapConfig.boostPadSegs || []);
     this.itemBoxes = this._placeItemBoxes(mapConfig.itemBoxSegs || []);
+    this.movingObjects = this._placeMovingObjects(mapConfig.movingObjects || []);
   }
 
   // Find closest segment to a world point
@@ -3076,6 +3127,49 @@ class Track {
     return boxes;
   }
 
+  _placeMovingObjects(configs) {
+    return configs
+      .filter(cfg => cfg.seg < this.n)
+      .map((cfg, idx) => {
+        const s = this.segments[cfg.seg];
+        const t = cfg.t !== undefined ? cfg.t : 0.5;
+        const baseX = s.a.x + s.dx * t;
+        const baseY = s.a.y + s.dy * t;
+        const obj = {
+          seg: cfg.seg,
+          baseX,
+          baseY,
+          nx: s.nx,
+          ny: s.ny,
+          ang: Math.atan2(s.dy, s.dx),
+          amp: cfg.amp || Math.max(55, s.halfW * 0.8),
+          speed: cfg.speed || 1,
+          phase: cfg.phase || 0,
+          r: cfg.r || 24,
+          color: cfg.color || "#57f2ff",
+          label: cfg.label || "FIREWALL",
+          x: baseX,
+          y: baseY,
+          idx
+        };
+        this._updateMovingObjectPosition(obj);
+        return obj;
+      });
+  }
+
+  _updateMovingObjectPosition(obj) {
+    const sweep = Math.sin(obj.phase) * obj.amp;
+    obj.x = obj.baseX + obj.nx * sweep;
+    obj.y = obj.baseY + obj.ny * sweep;
+  }
+
+  updateMovingObjects(dt) {
+    for (const obj of this.movingObjects) {
+      obj.phase += obj.speed * 0.035 * dt;
+      this._updateMovingObjectPosition(obj);
+    }
+  }
+
   // ---- Drawing ----
   drawPath(ctx) {
     ctx.beginPath();
@@ -3161,6 +3255,48 @@ class Track {
 
     // Trees / decorations (Holographic pillars)
     this._drawDecor(ctx);
+  }
+
+  drawMovingObjects(ctx, time) {
+    for (const obj of this.movingObjects) {
+      const pulse = 0.75 + 0.25 * Math.sin(time * 0.012 + obj.idx);
+      ctx.save();
+      ctx.translate(obj.x, obj.y);
+      ctx.rotate(obj.ang);
+      ctx.shadowBlur = 20 * pulse;
+      ctx.shadowColor = obj.color;
+
+      // Sweeping firewall gate body
+      ctx.fillStyle = hexToRgba(obj.color, 0.22);
+      ctx.strokeStyle = obj.color;
+      ctx.lineWidth = 2.5;
+      roundRect(ctx, -34, -18, 68, 36, 8);
+      ctx.fill();
+      ctx.stroke();
+
+      // Rotating access-lock core
+      ctx.rotate(-obj.phase * 1.8);
+      ctx.strokeStyle = "#ffffff";
+      ctx.lineWidth = 1.5;
+      ctx.beginPath();
+      ctx.moveTo(-12, 0);
+      ctx.lineTo(12, 0);
+      ctx.moveTo(0, -12);
+      ctx.lineTo(0, 12);
+      ctx.stroke();
+      ctx.beginPath();
+      ctx.arc(0, 0, 11, 0, TAU);
+      ctx.stroke();
+
+      ctx.rotate(obj.phase * 1.8);
+      ctx.shadowBlur = 0;
+      ctx.fillStyle = "#ffffff";
+      ctx.font = "bold 7px monospace";
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      ctx.fillText("ICE", 0, 0);
+      ctx.restore();
+    }
   }
 
   _drawGrass(ctx) {
@@ -5763,6 +5899,45 @@ function update(dt, time) {
       }
     }
 
+    if (game.track.movingObjects && game.track.movingObjects.length) {
+      game.track.updateMovingObjects(dt);
+      if (!game.p2pMode || game.p2pRole === "host") {
+        for (const obj of game.track.movingObjects) {
+          for (const kart of activeKarts) {
+            if (kart.spinoutTimer > 0 || kart.finished) continue;
+            if (dist(kart.x, kart.y, obj.x, obj.y) < obj.r + 17) {
+              if (kart.shieldTimer > 0) {
+                kart.shieldTimer = 0;
+                game.particles.burst(kart.x, kart.y, "#78dcff", 18, { type: "spark", spdMin: 1.5, spdMax: 4 });
+              } else {
+                const nx = (kart.x - obj.x) / Math.max(0.001, dist(kart.x, kart.y, obj.x, obj.y));
+                const ny = (kart.y - obj.y) / Math.max(0.001, dist(kart.x, kart.y, obj.x, obj.y));
+                kart.spinoutTimer = Math.max(kart.spinoutTimer, 38);
+                kart.spinAngle = 0;
+                kart.vx = nx * 5.5;
+                kart.vy = ny * 5.5;
+                triggerQuote(kart, "crash");
+                game.particles.burst(obj.x, obj.y, obj.color, 24, { type: "spark", spdMin: 2, spdMax: 6 });
+                game.particles.add({
+                  type: "text",
+                  text: "BLACK ICE!",
+                  x: obj.x,
+                  y: obj.y - 28,
+                  vx: 0,
+                  vy: -1.0,
+                  life: 48,
+                  maxLife: 48,
+                  size: 16,
+                  color: obj.color,
+                  drag: 0.98
+                });
+              }
+            }
+          }
+        }
+      }
+    }
+
     // Collisions
     kartCollisions();
 
@@ -5935,6 +6110,11 @@ function drawWorld(pKart, left, top, width, height, time, isP2) {
 
   // Items
   game.track.drawItems(ctx, time);
+
+  // Moving mainframe objects
+  if (game.track.movingObjects && game.track.movingObjects.length) {
+    game.track.drawMovingObjects(ctx, time);
+  }
 
   // Hazards
   if (game.hazards) {
