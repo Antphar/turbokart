@@ -488,6 +488,24 @@
     text-transform: uppercase;
     letter-spacing: 1px;
   }
+  .p2p-char-controls {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .p2p-char-btn {
+    width: 26px;
+    height: 24px;
+    border: 1px solid rgba(87, 242, 255, 0.32);
+    border-radius: 7px;
+    background: rgba(87, 242, 255, 0.08);
+    color: #57f2ff;
+    font-weight: 900;
+    cursor: pointer;
+  }
+  .p2p-char-btn:hover {
+    background: rgba(87, 242, 255, 0.18);
+  }
   .p2p-start-btn {
     display: none;
     margin-top: 8px;
@@ -2014,19 +2032,29 @@ const Sound = {
       name: "Mainframe Sunset",
       tempo: 124,
       icon: "🌅",
-      color: "#57f2ff"
+      color: "#57f2ff",
+      style: "Synthwave Cruise"
     },
     {
       name: "Neon Acid Overdrive",
       tempo: 128,
       icon: "⚡",
-      color: "#ff4d6d"
+      color: "#ff4d6d",
+      style: "Acid Sprint"
     },
     {
       name: "Retro Chiptune Horizon",
       tempo: 118,
       icon: "👾",
-      color: "#a4ff80"
+      color: "#a4ff80",
+      style: "Chiptune Flow"
+    },
+    {
+      name: "Midnight House Circuit",
+      tempo: 126,
+      icon: "◆",
+      color: "#b983ff",
+      style: "Modern Tech House"
     }
   ],
   trackIdx: null,
@@ -2039,7 +2067,7 @@ const Sound = {
     const icon = document.getElementById("audio-toast-icon");
     if (!toast || !title || !tempo) return;
 
-    const t = this.tracks[this.trackIdx || 0];
+    const t = this.tracks[this.trackIdx || 0] || this.tracks[0];
     title.innerText = t.name;
     tempo.innerText = this.tempo + " BPM" + (this.tempo > t.tempo ? " (FINAL LAP!)" : "");
     if (icon) icon.innerText = t.icon;
@@ -2058,9 +2086,9 @@ const Sound = {
     this.isPlayingMusic = true;
 
     if (this.trackIdx === null || this.trackIdx === undefined) {
-      this.trackIdx = Math.floor(Math.random() * 3);
+      this.trackIdx = Math.floor(Math.random() * this.tracks.length);
     }
-    const t = this.tracks[this.trackIdx];
+    const t = this.tracks[this.trackIdx] || this.tracks[0];
     this.tempo = t.tempo;
 
     this.musicGain = this.ctx.createGain();
@@ -2106,51 +2134,54 @@ const Sound = {
     const stepDur = 60.0 / this.tempo / 4.0; // length of 16th note
     const track = this.trackIdx || 0;
 
-    // 1. Play bass note
+    // 1. Play bass groove
     const bassFreq = this.getBassFreq(step);
-    this.playBassNote(bassFreq, time, stepDur * 0.95, step);
+    if (bassFreq) {
+      this.playBassNote(bassFreq, time, stepDur * (track === 3 ? 1.35 : 1.05), step);
+    }
 
     // 2. Play melody note if any
     const melFreq = this.getMelodyNote(step);
     if (melFreq) {
-      // Chorus section (bars 4-5) lead is played 1 octave higher!
-      const leadFreq = (bar === 4 || bar === 5) ? melFreq * 2.0 : melFreq;
-      this.playMelodyNote(leadFreq, time, stepDur * 1.8);
+      this.playMelodyNote(melFreq, time, stepDur * (track === 3 ? 2.6 : 1.8));
     }
 
-    // 2b. C64-style bubbling chord arpeggiator on off-beats
-    if (bar < 6 && (stepInBar % 2 === 1)) {
+    // 2b. Chords/arps: retro sparkle for chiptune, rounded stabs for house.
+    if (track === 3 && bar < 6 && (stepInBar === 2 || stepInBar === 6 || stepInBar === 10 || stepInBar === 14)) {
+      this.playHouseChord(this.getChordFreqs(track, bar), time, stepDur * 2.8);
+    } else if (track !== 3 && bar < 6 && ((track === 1 && (stepInBar === 3 || stepInBar === 7 || stepInBar === 11 || stepInBar === 15)) || (track !== 1 && stepInBar % 4 === 1))) {
       const chordFreqs = this.getChordFreqs(track, bar);
       this.playChiptuneArp(chordFreqs, time, stepDur * 0.95);
     }
 
-    // 3. Play drum track (no drums during breakdown bars 6 & 7, except transition snare roll!)
-    if (bar < 6) {
-      // Hi-Hats: play off-beats in Chorus section (bars 4-5) on steps 2, 6, 10, 14
-      if ((bar === 4 || bar === 5) && (stepInBar === 2 || stepInBar === 6 || stepInBar === 10 || stepInBar === 14)) {
+    // 3. Play drum track with per-song grooves.
+    if (track === 3) {
+      if (bar !== 6 && (stepInBar === 0 || stepInBar === 4 || stepInBar === 8 || stepInBar === 12)) {
+        this.playRetroKick(time);
+      }
+      if (bar !== 6 && (stepInBar === 4 || stepInBar === 12)) {
+        this.playRetroSnare(time, 0.75);
+      }
+      if (bar < 7 && (stepInBar === 2 || stepInBar === 6 || stepInBar === 10 || stepInBar === 14 || ((bar === 4 || bar === 5) && stepInBar % 4 === 3))) {
+        this.playRetroHiHat(time);
+      }
+    } else if (bar < 6) {
+      const chorus = bar === 4 || bar === 5;
+      const hatSteps = track === 0 ? [2, 6, 10, 14] : track === 1 ? [3, 7, 10, 15] : [2, 5, 10, 13];
+      if ((chorus || track === 1) && hatSteps.includes(stepInBar)) {
         this.playRetroHiHat(time);
       }
 
-      // Kicks:
-      // Verse (bars 0-3): play on beat 1 and 3 (stepInBar 0, 8)
-      // Chorus (bars 4-5): play on every beat (stepInBar 0, 4, 8, 12) - driving four-on-the-floor kick!
-      if (bar === 4 || bar === 5) {
-        if (stepInBar === 0 || stepInBar === 4 || stepInBar === 8 || stepInBar === 12) {
-          this.playRetroKick(time);
-        }
-      } else {
-        if (stepInBar === 0 || stepInBar === 8) {
-          this.playRetroKick(time);
-        }
+      const kickSteps = chorus ? [0, 4, 8, 12] : (track === 1 ? [0, 7, 10] : track === 2 ? [0, 6, 12] : [0, 8, 14]);
+      if (kickSteps.includes(stepInBar)) {
+        this.playRetroKick(time);
       }
 
-      // Snares: backbeat on steps 4, 12 of each 16-step bar
       if (stepInBar === 4 || stepInBar === 12) {
-        this.playRetroSnare(time);
+        this.playRetroSnare(time, track === 2 ? 0.72 : 0.9);
       }
     } else if (bar === 7 && stepInBar >= 12) {
-      // Progressive build-up snare drum roll
-      const snareVolumeScale = (stepInBar - 11) / 4.0; // 0.25, 0.5, 0.75, 1.0
+      const snareVolumeScale = (stepInBar - 11) / 4.0;
       this.playRetroSnare(time, snareVolumeScale);
     }
   },
@@ -2161,226 +2192,147 @@ const Sound = {
     const track = this.trackIdx || 0;
 
     if (track === 0) {
-      let baseFreq = 82.41; // E2 (Em chord)
-      if (bar === 1 || bar === 5) baseFreq = 65.41; // C2 (C chord)
-      else if (bar === 2) baseFreq = 73.42; // D2 (D chord)
-      else if (bar === 3) baseFreq = 58.27; // B1 (Bm/B chord)
-      else if (bar === 4) baseFreq = 82.41; // E2 (Em chord)
-      else if (bar === 6) baseFreq = 55.00; // A1 (Am chord)
-      else if (bar === 7) baseFreq = 61.74; // B1 (B7 chord)
-
-      if (bar < 6 && stepInBar % 2 === 1) {
-        return baseFreq * 2;
-      }
-      return baseFreq;
+      const roots = [82.41, 65.41, 73.42, 61.74, 82.41, 65.41, 55.00, 61.74];
+      const patterns = [
+        [1, null, null, 1.5, null, 2, null, null, 1, null, 1.5, null, 2, null, null, 1.5],
+        [1, null, 1.5, null, null, 2, null, 1.5, 1, null, null, 1.5, null, 2, null, null],
+        [1, null, null, 1.5, 2, null, 1.5, null, 1, null, 2, null, 1.5, null, null, 2],
+        [1, null, 1.5, null, 2, null, null, 1.5, 1, null, 1.25, null, 1.5, null, 2, null]
+      ];
+      const ratio = (bar >= 6 ? [1, null, null, null, 1.5, null, null, null, 2, null, 1.5, null, 1, null, null, null] : patterns[bar % patterns.length])[stepInBar];
+      return ratio ? roots[bar] * ratio : null;
     }
 
     if (track === 1) {
-      let baseFreq = 55.00; // A1
-      if (bar === 1 || bar === 5) baseFreq = 43.65; // F1
-      else if (bar === 2) baseFreq = 49.00; // G1
-      else if (bar === 3) baseFreq = 41.20; // E1
-      else if (bar === 4) baseFreq = 55.00; // A1
-      else if (bar === 6) baseFreq = 36.71; // D1
-      else if (bar === 7) baseFreq = 41.20; // E1
-
-      if (bar < 6 && (stepInBar === 3 || stepInBar === 7 || stepInBar === 11 || stepInBar === 15)) {
-        return baseFreq * 2;
-      }
-      return baseFreq;
+      const roots = [55.00, 43.65, 49.00, 41.20, 55.00, 43.65, 36.71, 41.20];
+      const patterns = [
+        [1, null, 2, null, 1.5, null, null, 2, 1, null, 1.5, null, 2, null, 1, null],
+        [1, 2, null, 1.5, null, 2, null, null, 1, null, 1.5, 2, null, null, 1.5, null],
+        [1, null, 1.5, 2, null, null, 1, null, 1.5, null, 2, null, 1, null, 1.5, 2],
+        [1, null, 2, null, 1.5, null, 1, null, 2, null, 1.5, null, 1, null, 2, null]
+      ];
+      const ratio = (bar >= 6 ? [1, null, null, 1.5, null, null, 2, null, 1, null, null, 1.5, 2, null, null, null] : patterns[bar % patterns.length])[stepInBar];
+      return ratio ? roots[bar] * ratio : null;
     }
 
     if (track === 2) {
-      let baseFreq = 65.41; // C2
-      if (bar === 1 || bar === 5) baseFreq = 98.00; // G2
-      else if (bar === 2) baseFreq = 55.00; // A1
-      else if (bar === 3) baseFreq = 87.31; // F2
-      else if (bar === 4) baseFreq = 65.41; // C2
-      else if (bar === 6) baseFreq = 87.31; // F2
-      else if (bar === 7) baseFreq = 98.00; // G2
-
-      if (bar < 6 && stepInBar % 2 === 1) {
-        return baseFreq * 2;
-      }
-      return baseFreq;
+      const roots = [65.41, 98.00, 55.00, 87.31, 65.41, 98.00, 87.31, 98.00];
+      const patterns = [
+        [1, null, 2, null, 1.5, null, 2, null, 1, null, 2, null, 1.5, null, null, 2],
+        [1, null, 1.5, null, 2, null, 1.5, null, 1, null, 2, null, 1.5, null, 2, null],
+        [1, null, 2, null, 1.2, null, 1.5, null, 1, null, 2, null, 1.5, null, 1.2, null],
+        [1, null, 1.5, null, 2, null, null, 1.5, 1, null, 1.2, null, 1.5, null, 2, null]
+      ];
+      const ratio = (bar >= 6 ? [1, null, 1.5, null, null, null, 2, null, 1, null, 1.5, null, 2, null, null, null] : patterns[bar % patterns.length])[stepInBar];
+      return ratio ? roots[bar] * ratio : null;
     }
 
-    return 82.41;
+    if (track === 3) {
+      const roots = [43.65, 51.91, 38.89, 58.27, 43.65, 51.91, 46.25, 58.27];
+      const patterns = [
+        [null, null, 1, null, null, null, 1, 1.5, null, null, 1, null, null, null, 2, null],
+        [null, null, 1, 1.5, null, null, 1, null, null, null, 2, null, null, 1.5, 1, null],
+        [null, null, 1, null, null, 1.5, 1, null, null, null, 2, null, null, null, 1, 1.5],
+        [null, null, 1, null, null, null, 1.5, null, null, null, 1, 2, null, null, 1.5, null]
+      ];
+      const ratio = (bar >= 6 ? [null, null, 1, null, null, null, null, null, null, null, 1.5, null, null, null, 2, null] : patterns[bar % patterns.length])[stepInBar];
+      return ratio ? roots[bar] * ratio : null;
+    }
+
+    return null;
+  },
+
+  getPatternNote(step, events, length = 128) {
+    const idx = step % length;
+    const hit = events.find(([pos]) => pos === idx);
+    return hit ? hit[1] : null;
   },
 
   getMelodyNote(step) {
     const track = this.trackIdx || 0;
     const bar = Math.floor(step / 16);
+    const stepInBar = step % 16;
 
     if (track === 0) {
-      const stepInPattern = step % 64;
-      const m = Array(64).fill(null);
-      m[0]  = 329.63; // E4
-      m[2]  = 392.00; // G4
-      m[3]  = 493.88; // B4
-      m[4]  = 440.00; // A4
-      m[6]  = 392.00; // G4
-      m[8]  = 493.88; // B4
-      m[10] = 587.33; // D5
-      m[11] = 659.25; // E5
-      m[12] = 493.88; // B4
-      m[14] = 440.00; // A4
-
-      m[16] = 392.00; // G4
-      m[18] = 523.25; // C5
-      m[19] = 659.25; // E5
-      m[20] = 587.33; // D5
-      m[22] = 523.25; // C5
-      m[24] = 659.25; // E5
-      m[26] = 783.99; // G5
-      m[27] = 880.00; // A5
-      m[28] = 659.25; // E5
-      m[30] = 523.25; // C5
-
-      m[32] = 440.00; // A4
-      m[34] = 587.33; // D5
-      m[35] = 739.99; // F#5
-      m[36] = 659.25; // E5
-      m[38] = 587.33; // D5
-      m[40] = 739.99; // F#5
-      m[42] = 880.00; // A5
-      m[43] = 987.77; // B5
-      m[44] = 739.99; // F#5
-      m[46] = 587.33; // D5
-
-      m[48] = 493.88; // B4
-      m[50] = 587.33; // D5
-      m[51] = 739.99; // F#5
-      m[52] = 493.88; // B4
-      m[54] = 440.00; // A4
-      m[56] = 392.00; // G4
-      m[58] = 369.99; // F#4
-      m[59] = 329.63; // E4
-      m[60] = 369.99; // F#4
-      m[62] = 440.00; // A4
-
       if (bar === 6) {
-        const amNotes = [440.00, null, 523.25, null, 659.25, null, 783.99, null, 880.00, null, 1046.50, null, 1318.51, null, 1567.98, null];
-        return amNotes[step % 16];
+        return [440.00, null, null, 523.25, null, 659.25, null, null, 783.99, null, 659.25, null, 523.25, null, null, null][stepInBar];
       } else if (bar === 7) {
-        const b7Notes = [493.88, null, 622.25, null, 739.99, null, 880.00, null, 987.77, null, 1244.51, null, 1479.98, null, 1760.00, null];
-        return b7Notes[step % 16];
+        return [493.88, null, 622.25, null, 739.99, null, null, 880.00, 987.77, null, 739.99, null, 622.25, null, 493.88, null][stepInBar];
       }
-      return m[stepInPattern];
+      return this.getPatternNote(step, [
+        [0, 329.63], [3, 392.00], [6, 493.88], [10, 587.33], [12, 493.88], [15, 392.00],
+        [17, 523.25], [20, 659.25], [23, 587.33], [26, 783.99], [29, 659.25],
+        [32, 440.00], [35, 587.33], [38, 739.99], [42, 880.00], [45, 739.99], [47, 587.33],
+        [49, 493.88], [52, 587.33], [55, 440.00], [58, 392.00], [61, 369.99],
+        [64, 329.63], [67, 493.88], [70, 659.25], [74, 587.33], [76, 493.88], [79, 440.00],
+        [81, 392.00], [84, 523.25], [87, 659.25], [90, 783.99], [93, 659.25],
+        [96, 440.00], [99, 587.33], [102, 739.99], [106, 987.77], [109, 880.00], [111, 739.99],
+        [113, 493.88], [116, 587.33], [119, 493.88], [122, 440.00], [125, 392.00]
+      ]);
     }
 
     if (track === 1) {
-      const stepInPattern = step % 64;
-      const m = Array(64).fill(null);
-      m[0]  = 440.00; // A4
-      m[1]  = 523.25; // C5
-      m[2]  = 587.33; // D5
-      m[4]  = 659.25; // E5
-      m[6]  = 587.33; // D5
-      m[8]  = 523.25; // C5
-      m[9]  = 440.00; // A4
-      m[11] = 523.25; // C5
-      m[12] = 659.25; // E5
-      m[14] = 783.99; // G5
-
-      m[16] = 349.23; // F4
-      m[17] = 440.00; // A4
-      m[18] = 523.25; // C5
-      m[20] = 587.33; // D5
-      m[22] = 523.25; // C5
-      m[24] = 440.00; // A4
-      m[25] = 349.23; // F4
-      m[27] = 440.00; // A4
-      m[28] = 523.25; // C5
-      m[30] = 698.46; // F5
-
-      m[32] = 392.00; // G4
-      m[33] = 493.88; // B4
-      m[34] = 587.33; // D5
-      m[36] = 659.25; // E5
-      m[38] = 587.33; // D5
-      m[40] = 493.88; // B4
-      m[41] = 392.00; // G4
-      m[43] = 493.88; // B4
-      m[44] = 587.33; // D5
-      m[46] = 783.99; // G5
-
-      m[48] = 415.30; // G#4
-      m[49] = 493.88; // B4
-      m[50] = 587.33; // D5
-      m[52] = 659.25; // E5
-      m[54] = 587.33; // D5
-      m[56] = 493.88; // B4
-      m[57] = 415.30; // G#4
-      m[59] = 493.88; // B4
-      m[60] = 659.25; // E5
-      m[62] = 830.61; // G#5
-
       if (bar === 6) {
-        const dmNotes = [587.33, null, 698.46, null, 880.00, null, 1046.50, null, 1174.66, null, 1396.91, null, 1760.00, null, 2093.00, null];
-        return dmNotes[step % 16];
+        return [587.33, null, 698.46, null, null, 880.00, null, 1046.50, 1174.66, null, 880.00, null, 698.46, null, null, null][stepInBar];
       } else if (bar === 7) {
-        const e7Notes = [659.25, null, 830.61, null, 987.77, null, 1174.66, null, 1318.51, null, 1661.22, null, 1975.53, null, 2349.32, null];
-        return e7Notes[step % 16];
+        return [659.25, 830.61, null, 987.77, null, 1174.66, null, null, 1318.51, null, 987.77, null, 830.61, null, 659.25, null][stepInBar];
       }
-      return m[stepInPattern];
+      return this.getPatternNote(step, [
+        [0, 440.00], [1, 523.25], [4, 659.25], [7, 587.33], [10, 523.25], [12, 659.25], [15, 783.99],
+        [16, 349.23], [18, 523.25], [21, 587.33], [24, 440.00], [27, 523.25], [30, 698.46],
+        [32, 392.00], [33, 493.88], [36, 659.25], [39, 587.33], [42, 493.88], [44, 587.33], [47, 783.99],
+        [48, 415.30], [50, 587.33], [53, 659.25], [56, 493.88], [59, 587.33], [62, 830.61],
+        [64, 440.00], [67, 523.25], [69, 659.25], [72, 783.99], [75, 659.25], [78, 587.33],
+        [80, 349.23], [83, 440.00], [85, 587.33], [88, 698.46], [91, 587.33], [94, 523.25],
+        [96, 392.00], [99, 493.88], [101, 659.25], [104, 783.99], [107, 659.25], [110, 587.33],
+        [112, 415.30], [115, 493.88], [117, 659.25], [120, 830.61], [123, 739.99], [126, 659.25]
+      ]);
     }
 
     if (track === 2) {
-      const stepInPattern = step % 64;
-      const m = Array(64).fill(null);
-      m[0]  = 523.25; // C5
-      m[2]  = 659.25; // E5
-      m[4]  = 783.99; // G5
-      m[6]  = 659.25; // E5
-      m[8]  = 880.00; // A5
-      m[10] = 783.99; // G5
-      m[12] = 659.25; // E5
-      m[14] = 587.33; // D5
-
-      m[16] = 392.00; // G4
-      m[18] = 493.88; // B4
-      m[20] = 587.33; // D5
-      m[22] = 493.88; // B4
-      m[24] = 659.25; // E5
-      m[26] = 587.33; // D5
-      m[28] = 493.88; // B4
-      m[30] = 440.00; // A4
-
-      m[32] = 440.00; // A4
-      m[34] = 523.25; // C5
-      m[36] = 659.25; // E5
-      m[38] = 523.25; // C5
-      m[40] = 783.99; // G5
-      m[42] = 659.25; // E5
-      m[44] = 523.25; // C5
-      m[46] = 493.88; // B4
-
-      m[48] = 349.23; // F4
-      m[50] = 440.00; // A4
-      m[52] = 523.25; // C5
-      m[54] = 440.00; // A4
-      m[56] = 659.25; // E5
-      m[58] = 523.25; // C5
-      m[60] = 440.00; // A4
-      m[62] = 392.00; // G4
-
       if (bar === 6) {
-        const fNotes = [698.46, null, 880.00, null, 1046.50, null, 1318.51, null, 1396.91, null, 1760.00, null, 2093.00, null, 2637.02, null];
-        return fNotes[step % 16];
+        return [698.46, null, 880.00, null, 1046.50, null, null, 1318.51, 1396.91, null, 1046.50, null, 880.00, null, null, null][stepInBar];
       } else if (bar === 7) {
-        const gNotes = [783.99, null, 987.77, null, 1174.66, null, 1396.91, null, 1567.98, null, 1975.53, null, 2349.32, null, 2793.83, null];
-        return gNotes[step % 16];
+        return [783.99, null, 987.77, null, 1174.66, null, 1396.91, null, 1567.98, null, 1174.66, null, 987.77, null, 783.99, null][stepInBar];
       }
-      return m[stepInPattern];
+      return this.getPatternNote(step, [
+        [0, 523.25], [2, 659.25], [5, 783.99], [8, 880.00], [11, 783.99], [14, 587.33],
+        [16, 392.00], [19, 493.88], [22, 587.33], [24, 659.25], [27, 587.33], [30, 440.00],
+        [32, 440.00], [34, 523.25], [37, 659.25], [40, 783.99], [43, 659.25], [46, 493.88],
+        [48, 349.23], [51, 440.00], [54, 523.25], [56, 659.25], [59, 523.25], [62, 392.00],
+        [64, 523.25], [67, 659.25], [69, 783.99], [72, 1046.50], [75, 880.00], [78, 659.25],
+        [80, 392.00], [82, 493.88], [85, 587.33], [88, 783.99], [91, 659.25], [94, 493.88],
+        [96, 440.00], [99, 523.25], [101, 659.25], [104, 880.00], [107, 783.99], [110, 659.25],
+        [112, 349.23], [115, 440.00], [117, 523.25], [120, 698.46], [123, 659.25], [126, 523.25]
+      ]);
+    }
+
+    if (track === 3) {
+      if (bar === 6) {
+        return [523.25, null, null, 622.25, null, null, 698.46, null, 783.99, null, null, 698.46, null, 622.25, null, null][stepInBar];
+      } else if (bar === 7) {
+        return [466.16, null, 523.25, null, 622.25, null, null, 698.46, 783.99, null, 698.46, null, 622.25, null, 523.25, null][stepInBar];
+      }
+      return this.getPatternNote(step, [
+        [4, 523.25], [11, 622.25], [14, 698.46],
+        [18, 523.25], [23, 783.99], [30, 622.25],
+        [36, 466.16], [43, 622.25], [46, 698.46],
+        [50, 587.33], [55, 698.46], [62, 523.25],
+        [68, 523.25], [71, 622.25], [78, 783.99],
+        [82, 523.25], [87, 932.33], [94, 783.99],
+        [100, 466.16], [103, 622.25], [110, 698.46],
+        [114, 587.33], [119, 698.46], [126, 523.25]
+      ]);
     }
 
     return null;
   },
 
   playBassNote(freq, time, dur, step) {
-    if (!this.ctx) return;
+    if (!this.ctx || !freq) return;
     const bar = Math.floor(step / 16);
+    const stepInBar = step % 16;
+    const track = this.trackIdx || 0;
     
     // 1. Deep sub-bass oscillator (clean triangle wave 1 octave below)
     const subOsc = this.ctx.createOscillator();
@@ -2410,19 +2362,24 @@ const Sound = {
     // 4. Low-pass filter with resonant sweep (acid-synth style or dark drone style)
     const filter = this.ctx.createBiquadFilter();
     filter.type = "lowpass";
-    filter.Q.setValueAtTime(bar >= 6 ? 1.5 : 3.8, time); // Less resonance for breakdown drone, more squelch for main beats
+    filter.Q.setValueAtTime(bar >= 6 ? 1.4 : (track === 1 ? 4.5 : 2.8), time);
     if (bar >= 6) {
-      filter.frequency.setValueAtTime(250, time);
+      filter.frequency.setValueAtTime(track === 3 ? 420 : 250, time);
       filter.frequency.exponentialRampToValueAtTime(100, time + dur * 0.95);
+    } else if (track === 3) {
+      filter.frequency.setValueAtTime(900, time);
+      filter.frequency.exponentialRampToValueAtTime(180, time + dur * 0.9);
     } else {
-      filter.frequency.setValueAtTime(650, time);
+      filter.frequency.setValueAtTime(track === 1 ? 760 : 620, time);
       filter.frequency.exponentialRampToValueAtTime(100, time + dur * 0.85);
     }
 
     // 5. Shared dynamic gain envelope (punchy attack, exponential decay)
     const gain = this.ctx.createGain();
+    const accent = (stepInBar === 0 || stepInBar === 8) ? 1.0 : 0.82;
+    const peak = (track === 3 ? 0.24 : track === 1 ? 0.22 : 0.20) * accent;
     gain.gain.setValueAtTime(0.001, time);
-    gain.gain.linearRampToValueAtTime(0.28, time + 0.015);
+    gain.gain.linearRampToValueAtTime(peak, time + 0.015);
     gain.gain.exponentialRampToValueAtTime(0.001, time + dur);
 
     // Routing:
@@ -2468,6 +2425,13 @@ const Sound = {
       if (bar === 3 || bar === 6) return [349.23, 440.00, 523.25]; // F (F4, A4, C5)
       if (bar === 7) return [392.00, 493.88, 587.33];             // G (G4, B4, D5)
     }
+    if (track === 3) {
+      // Fm9, Abmaj7, Eb, Bb; extended voicings for smoother house stabs.
+      if (bar === 0 || bar === 4) return [349.23, 415.30, 523.25, 622.25];
+      if (bar === 1 || bar === 5) return [415.30, 523.25, 622.25, 783.99];
+      if (bar === 2 || bar === 6) return [311.13, 392.00, 466.16, 622.25];
+      if (bar === 3 || bar === 7) return [293.66, 349.23, 466.16, 587.33];
+    }
     return [523.25, 659.25, 783.99]; // Default C chord
   },
 
@@ -2489,7 +2453,7 @@ const Sound = {
     }
 
     gain.gain.setValueAtTime(0.001, time);
-    gain.gain.linearRampToValueAtTime(0.07, time + 0.015);
+    gain.gain.linearRampToValueAtTime(0.045, time + 0.015);
     gain.gain.exponentialRampToValueAtTime(0.001, time + dur);
 
     osc.connect(gain);
@@ -2499,30 +2463,67 @@ const Sound = {
     osc.stop(time + dur + 0.02);
   },
 
+  playHouseChord(freqs, time, dur) {
+    if (!this.ctx || this.muted) return;
+    const filter = this.ctx.createBiquadFilter();
+    filter.type = "lowpass";
+    filter.Q.setValueAtTime(1.8, time);
+    filter.frequency.setValueAtTime(1700, time);
+    filter.frequency.exponentialRampToValueAtTime(620, time + dur);
+
+    const gain = this.ctx.createGain();
+    gain.gain.setValueAtTime(0.001, time);
+    gain.gain.linearRampToValueAtTime(0.055, time + 0.02);
+    gain.gain.exponentialRampToValueAtTime(0.001, time + dur);
+
+    const oscillators = freqs.map((freq, idx) => {
+      const osc = this.ctx.createOscillator();
+      osc.type = "sawtooth";
+      osc.frequency.setValueAtTime(freq, time);
+      osc.detune.setValueAtTime((idx - 1.5) * 3, time);
+      osc.connect(filter);
+      osc.start(time);
+      osc.stop(time + dur + 0.03);
+      return osc;
+    });
+
+    filter.connect(gain);
+    if (this.ctx.createStereoPanner) {
+      const panner = this.ctx.createStereoPanner();
+      panner.pan.setValueAtTime(0.18, time);
+      gain.connect(panner);
+      panner.connect(this.musicGain);
+    } else {
+      gain.connect(this.musicGain);
+    }
+    return oscillators;
+  },
+
   playMelodyNote(freq, time, dur) {
     if (!this.ctx) return;
+    const track = this.trackIdx || 0;
     const osc = this.ctx.createOscillator();
     const gain = this.ctx.createGain();
 
-    osc.type = "square";
+    osc.type = track === 1 ? "sawtooth" : track === 3 ? "sine" : "triangle";
     osc.frequency.setValueAtTime(freq, time);
 
-    // Classic 6Hz chiptune vibrato
+    // A light vibrato keeps leads alive without turning every loop into a siren.
     const vibrato = this.ctx.createOscillator();
     const vibratoGain = this.ctx.createGain();
-    vibrato.frequency.value = 6;
-    vibratoGain.gain.value = 3.5;
+    vibrato.frequency.value = track === 3 ? 4.2 : 5.4;
+    vibratoGain.gain.value = track === 1 ? 2.8 : track === 3 ? 1.4 : 2.2;
 
     vibrato.connect(vibratoGain);
     vibratoGain.connect(osc.frequency);
 
     const filter = this.ctx.createBiquadFilter();
     filter.type = "lowpass";
-    filter.frequency.setValueAtTime(1800, time);
-    filter.frequency.exponentialRampToValueAtTime(750, time + dur);
+    filter.frequency.setValueAtTime(track === 3 ? 1350 : 2100, time);
+    filter.frequency.exponentialRampToValueAtTime(track === 3 ? 760 : 900, time + dur);
 
     gain.gain.setValueAtTime(0.001, time);
-    gain.gain.linearRampToValueAtTime(0.13, time + 0.02);
+    gain.gain.linearRampToValueAtTime(track === 2 ? 0.105 : track === 3 ? 0.07 : 0.085, time + 0.02);
     gain.gain.exponentialRampToValueAtTime(0.001, time + dur);
 
     vibrato.start(time);
@@ -2535,7 +2536,7 @@ const Sound = {
     delay.delayTime.setValueAtTime(stepDur * 3, time);
 
     const delayGain = this.ctx.createGain();
-    delayGain.gain.setValueAtTime(0.35, time);
+    delayGain.gain.setValueAtTime(track === 3 ? 0.42 : 0.26, time);
 
     delay.connect(delayGain);
     delayGain.connect(delay);
@@ -2665,7 +2666,7 @@ window.addEventListener("keydown", (e) => {
   }
   if (key === "n" || key === "N" || code === "KeyN") {
     if (Sound.isPlayingMusic) {
-      Sound.trackIdx = (Sound.trackIdx + 1) % 3;
+      Sound.trackIdx = (Sound.trackIdx + 1) % Sound.tracks.length;
       const t = Sound.tracks[Sound.trackIdx];
       Sound.tempo = t.tempo;
       if (game.player && game.player.lap >= TOTAL_LAPS - 1) {
@@ -4931,10 +4932,17 @@ function getP2pRosterHtml() {
   return players.map((player, idx) => {
     const char = CHARACTERS[player.charIdx || 0];
     const localClass = player.id === game.p2pLocalId ? " local" : "";
+    const controls = player.id === game.p2pLocalId
+      ? `<span class="p2p-char-controls">
+          <button class="p2p-char-btn" type="button" data-p2p-char-delta="-1">&lt;</button>
+          <span class="p2p-player-chip">You</span>
+          <button class="p2p-char-btn" type="button" data-p2p-char-delta="1">&gt;</button>
+        </span>`
+      : `<span class="p2p-player-chip">Joined</span>`;
     return `
       <div class="p2p-player-row${localClass}">
         <span>${getP2pPlayerLabel(player, idx)} · ${char.name}</span>
-        <span class="p2p-player-chip">${player.id === game.p2pLocalId ? "You" : "Joined"}</span>
+        ${controls}
       </div>
     `;
   }).join("");
@@ -4944,12 +4952,37 @@ function renderP2pLobby() {
   const html = getP2pRosterHtml();
   if (p2pHostRoster) p2pHostRoster.innerHTML = game.p2pRole === "host" ? html : "";
   if (p2pJoinRoster) p2pJoinRoster.innerHTML = game.p2pRole === "guest" ? html : "";
+  for (const btn of document.querySelectorAll("[data-p2p-char-delta]")) {
+    btn.addEventListener("click", () => {
+      changeLocalP2pCharacter(Number(btn.dataset.p2pCharDelta));
+    });
+  }
 
   if (p2pStartRaceBtn) {
     const canStart = game.p2pRole === "host" && (game.p2pPlayers || []).length >= 2;
     p2pStartRaceBtn.style.display = game.p2pRole === "host" ? "inline-block" : "none";
     p2pStartRaceBtn.disabled = !canStart;
     p2pStartRaceBtn.textContent = canStart ? "Start Race" : "Waiting For Players";
+  }
+}
+
+function changeLocalP2pCharacter(delta) {
+  if (!game.p2pLocalId) return;
+  const player = game.p2pPlayers.find(p => p.id === game.p2pLocalId);
+  if (!player) return;
+  player.charIdx = (player.charIdx + delta + CHARACTERS.length) % CHARACTERS.length;
+  if (game.p2pLocalId === "host") game.selectedCharIdx = player.charIdx;
+  Sound.tone(520, 0.08, "square", 0.12);
+  renderP2pLobby();
+
+  if (game.p2pRole === "host") {
+    broadcastP2pLobby();
+  } else {
+    sendP2pMessage({
+      type: "lobby_char_update",
+      playerId: game.p2pLocalId,
+      charIdx: player.charIdx
+    });
   }
 }
 
@@ -5000,6 +5033,13 @@ function removeP2pGuestByConn(conn) {
   game.p2pPlayers = game.p2pPlayers.filter(p => p.id !== removedId);
   renderP2pLobby();
   broadcastP2pLobby();
+}
+
+function getP2pIdForConn(conn) {
+  for (const [id, existing] of p2pConnections.entries()) {
+    if (existing === conn) return id;
+  }
+  return null;
 }
 
 function sendToConn(conn, data) {
@@ -6786,7 +6826,7 @@ function renderMusicSettings() {
     card.className = "music-card" + (Sound.trackIdx === idx ? " selected" : "");
     card.innerHTML = `
       <div class="music-card-title"><span>${track.icon}</span><span>${track.name}</span></div>
-      <div class="music-card-meta">${track.tempo} BPM · ${idx === 0 ? "Synthwave Cruise" : idx === 1 ? "Acid Sprint" : "Chiptune Flow"}</div>
+      <div class="music-card-meta">${track.tempo} BPM · ${track.style}</div>
     `;
     card.addEventListener("click", () => {
       setMusicTrack(idx);
@@ -6797,8 +6837,9 @@ function renderMusicSettings() {
 }
 
 function setMusicTrack(idx) {
-  Sound.trackIdx = idx;
-  const track = Sound.tracks[idx];
+  const safeIdx = Math.floor(clamp(idx, 0, Sound.tracks.length - 1));
+  Sound.trackIdx = safeIdx;
+  const track = Sound.tracks[safeIdx];
   Sound.tempo = track.tempo;
   if (game.player && game.player.lap >= TOTAL_LAPS - 1) {
     Sound.tempo = track.tempo + 18;
@@ -7309,6 +7350,16 @@ function handleP2pData(data, sourceConn = null) {
     game.selectedMapIdx = data.mapIdx !== undefined ? data.mapIdx : game.selectedMapIdx;
     if (data.trackIdx !== undefined && data.trackIdx !== null) setMusicTrack(data.trackIdx);
     renderP2pLobby();
+  }
+
+  else if (data.type === "lobby_char_update") {
+    if (game.p2pRole !== "host") return;
+    const sourceId = getP2pIdForConn(sourceConn);
+    const playerId = sourceId || data.playerId;
+    const player = game.p2pPlayers.find(p => p.id === playerId);
+    if (!player) return;
+    player.charIdx = clamp(data.charIdx, 0, CHARACTERS.length - 1);
+    broadcastP2pLobby();
   }
 
   else if (data.type === "select_update") {
