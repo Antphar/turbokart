@@ -24,9 +24,11 @@ Every single sound effect and music track is synthesized on-the-fly using the br
 
 ### 🕹️ Authoritative Peer-to-Peer Multiplayer
 * Powered by **PeerJS (WebRTC)**.
-* Play with your friends instantly over local networks or across the world with direct peer connections.
+* Play with up to **4 online racers** over local networks or across the world with direct peer connections.
+* Host-managed lobbies show joined players and let the host start the race when ready.
 * Host-guest synchronization for local AI bots, item boxes, coin pickups, and hazards.
 * Dynamic guest input and coordinate synchronization packets.
+* Synchronized item activation events with spatialized projectile and shockwave feedback.
 
 ### 🚗 Advanced 2D Physics Engine
 * Realistic vector-based drift mechanics with 3 distinct tiers of neon sparks (Blue -> Orange -> Neon Purple) based on drift duration.
@@ -34,6 +36,13 @@ Every single sound effect and music track is synthesized on-the-fly using the br
 * Traction snapback speed boosts upon drift release.
 * Elastic wall-bouncing physics with angle-based impact recoil.
 * Slipstream drafting tunnels allowing you to lock onto karts ahead and gain overtaking turbo surges.
+* Off-road digital static particles and spatialized tire noise when karts leave the racing surface.
+
+### 🧨 Mainframe Items
+* **Dossier Projectile**: Fire a bouncing audit packet at the kart ahead.
+* **Merge Conflict**: Drop a red hazard block behind you.
+* **De-auth Shockwave**: Trigger an expanding neon pulse that spins out nearby opponents.
+* **Merge Request**: Tether to the kart ahead and pull yourself into review range.
 
 ### 🤖 Smart AI Autopilot Navigation
 * Multi-point waypoint lookahead for proactive cornering.
@@ -45,14 +54,19 @@ Every single sound effect and music track is synthesized on-the-fly using the br
 * Pulsing glassmorphic holographic data pillars replacing standard trees.
 * Glowing cyan boundaries with scrolling flow arrows on deep indigo highways.
 * Glowing "FINISH!" banners and confetti explosions.
+### 🗺️ Maps
+* **Core Mainframe Circuit**: The classic test speedway.
+* **Compliance Chicane**: Highly technical micro-circuit with acute 90° corners.
+* **Audit Super Ring**: Giant wide-lane speed ring for massive drifts.
+* **Black Ice Data Vault**: A complex vault-breach circuit with narrow corridors, switchbacks, and moving firewall gates.
+* **Regulatory Dragon Run**: A long escape boulevard where a compliance dragon chases racers and fires audit projectiles.
+* **Dragon's Escape** *(NEW)*: INFINITE SURVIVAL — a Japanese-themed open-ended trail. The dragon hunts from your left with progressive fire walls. One hit = dead. How far can you escape?
 
-### 🐉 Dragon's Escape Map
-* A **Japanese-themed highland circuit** where you race to escape a massive dragon's wrath.
-* **Dynamic Dragon Fire**: The dragon breathes waves of fire projectiles from the left side of the screen, forcing evasive driving.
-* **Progressive Intensity**: Fire frequency, projectile count, and kart speed all increase over time and each lap.
-* **Japanese Audio**: Procedural Taiko drums, Koto plucks, and Shakuhachi-style melodies that intensify from 90 BPM to 158 BPM as the race heats up.
-* **Japanese Visuals**: Misty mountains, swaying bamboo, Torii gates, paper lanterns, and cherry blossom trees create an authentic atmosphere.
-* A menacing dragon head follows you from the left edge of the screen, breathing fire as intensity rises.
+### 🎵 Dynamic Music Engine
+* **5 Switchable Retro Tracks**: Mainframe Sunset, Neon Acid Overdrive, Retro Chiptune Horizon, Midnight House Circuit, Velvet Haze Crawl — each with unique tempo, groove, and instrumentation.
+* **On-The-Fly Track Switching**: Change music style mid-race via the settings menu.
+* **Japanese Audio for Dragon's Escape**: Procedural Taiko drums, Koto plucks, Shamisen strums, and Shakuhachi melodies that intensify from 90 BPM to 158 BPM as survival time increases.
+* **Final Lap Tempo Surge**: Entering the final lap dynamically accelerates the sequencer's base tempo from **124 BPM to 142 BPM** without altering pitch or resetting the tracker.
 
 ---
 
@@ -67,6 +81,7 @@ Every single sound effect and music track is synthesized on-the-fly using the br
 * **Pause**: `P`
 * **Mute/Unmute**: `M`
 * **Restart**: `R`
+* **CRT Overlay**: Toggle from the title menu
 
 ---
 
