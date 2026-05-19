@@ -1277,6 +1277,28 @@ function triggerShootEffect(kart, item) {
       });
       game.particles.burst(kart.x + fx * 18, kart.y + fy * 18, "#39ff14", 14, { spdMin: 1.5, spdMax: 4 });
     }
+  } else if (item === "hotfix") {
+    Sound.spatialTone(kart.x, kart.y, 440, 0.5, "sawtooth", 0.2, 1760);
+    Sound.spatialTone(kart.x, kart.y, 220, 0.4, "square", 0.16, 880);
+    Sound.spatialNoise(kart.x, kart.y, 0.3, 0.1, 2000);
+    if (game.particles) {
+      for (let i = 0; i < 4; i++) {
+        game.particles.add({
+          type: "ring",
+          x: kart.x,
+          y: kart.y,
+          vx: 0,
+          vy: 0,
+          life: 20 + i * 6,
+          maxLife: 20 + i * 6,
+          size: 40 + i * 20,
+          startSize: 5,
+          color: i % 2 === 0 ? "#ffcc00" : "#ff6600"
+        });
+      }
+      game.particles.burst(kart.x, kart.y, "#ffcc00", 30, { spdMin: 3, spdMax: 7 });
+      game.particles.burst(kart.x, kart.y, "#ff6600", 20, { spdMin: 2, spdMax: 5 });
+    }
   }
 }
 
@@ -2394,10 +2416,61 @@ const Sound = {
     scheduler();
 
     this.showTrackToast();
+
+    if (this.trackIdx === 4) this.startVinylCrackle();
+  },
+
+  vinylCrackleNode: null,
+  vinylCrackleGain: null,
+
+  startVinylCrackle() {
+    if (!this.ctx || this.vinylCrackleNode) return;
+    const bufLen = this.ctx.sampleRate * 4;
+    const buffer = this.ctx.createBuffer(1, bufLen, this.ctx.sampleRate);
+    const data = buffer.getChannelData(0);
+    for (let i = 0; i < bufLen; i++) {
+      data[i] = Math.random() < 0.015 ? (Math.random() * 2 - 1) * 0.8 : (Math.random() * 2 - 1) * 0.01;
+    }
+
+    const src = this.ctx.createBufferSource();
+    src.buffer = buffer;
+    src.loop = true;
+
+    const lp = this.ctx.createBiquadFilter();
+    lp.type = "lowpass";
+    lp.frequency.value = 2500;
+
+    const hp = this.ctx.createBiquadFilter();
+    hp.type = "highpass";
+    hp.frequency.value = 300;
+
+    const g = this.ctx.createGain();
+    g.gain.value = 0.025;
+
+    src.connect(hp);
+    hp.connect(lp);
+    lp.connect(g);
+    g.connect(this.musicGain);
+
+    src.start();
+    this.vinylCrackleNode = src;
+    this.vinylCrackleGain = g;
+  },
+
+  stopVinylCrackle() {
+    if (this.vinylCrackleNode) {
+      try { this.vinylCrackleNode.stop(); this.vinylCrackleNode.disconnect(); } catch (e) {}
+      this.vinylCrackleNode = null;
+    }
+    if (this.vinylCrackleGain) {
+      try { this.vinylCrackleGain.disconnect(); } catch (e) {}
+      this.vinylCrackleGain = null;
+    }
   },
 
   stopMusic(fade = false) {
     this.isPlayingMusic = false;
+    this.stopVinylCrackle();
     if (this.musicInterval) {
       clearTimeout(this.musicInterval);
       this.musicInterval = null;
@@ -2440,7 +2513,23 @@ const Sound = {
     const stepDur = 60.0 / this.tempo / 4.0; // length of 16th note
     const track = this.trackIdx || 0;
 
-    // 1. Play bass groove
+    // Reactive intensity based on player race position (0.0 = last, 1.0 = first)
+    let intensity = 1.0;
+    if (game.player && !game.player.finished && (game.state === "racing" || game.state === "countdown")) {
+      try {
+        const rankings = rankAll();
+        const totalKarts = rankings.length;
+        if (totalKarts > 1) {
+          const rank = rankings.indexOf(game.player) + 1;
+          intensity = 1.0 - (rank - 1) / (totalKarts - 1);
+        }
+      } catch (e) { intensity = 1.0; }
+    }
+    const playDrums = intensity > 0.25;
+    const playChords = intensity > 0.15;
+    const fullDrums = intensity > 0.55;
+
+    // 1. Play bass groove (always plays, but quieter when losing)
     const bassFreq = this.getBassFreq(step);
     if (bassFreq) {
       this.playBassNote(bassFreq, time, stepDur * (track === 3 ? 1.35 : track === 4 ? 2.8 : 1.05), step);
@@ -2453,17 +2542,21 @@ const Sound = {
     }
 
     // 2b. Chords/arps: retro sparkle for chiptune, rounded stabs for house, pads for downtempo.
-    if (track === 4 && bar < 6 && (stepInBar === 0)) {
-      this.playDowntempoPad(this.getChordFreqs(track, bar), time, stepDur * 14);
-    } else if (track === 3 && bar < 6 && (stepInBar === 2 || stepInBar === 6 || stepInBar === 10 || stepInBar === 14)) {
-      this.playHouseChord(this.getChordFreqs(track, bar), time, stepDur * 2.8);
-    } else if (track !== 3 && track !== 4 && bar < 6 && ((track === 1 && (stepInBar === 3 || stepInBar === 7 || stepInBar === 11 || stepInBar === 15)) || (track !== 1 && stepInBar % 4 === 1))) {
-      const chordFreqs = this.getChordFreqs(track, bar);
-      this.playChiptuneArp(chordFreqs, time, stepDur * 0.95);
+    if (playChords) {
+      if (track === 4 && bar < 6 && (stepInBar === 0)) {
+        this.playDowntempoPad(this.getChordFreqs(track, bar), time, stepDur * 14);
+      } else if (track === 3 && bar < 6 && (stepInBar === 2 || stepInBar === 6 || stepInBar === 10 || stepInBar === 14)) {
+        this.playHouseChord(this.getChordFreqs(track, bar), time, stepDur * 2.8);
+      } else if (track !== 3 && track !== 4 && bar < 6 && ((track === 1 && (stepInBar === 3 || stepInBar === 7 || stepInBar === 11 || stepInBar === 15)) || (track !== 1 && stepInBar % 4 === 1))) {
+        const chordFreqs = this.getChordFreqs(track, bar);
+        this.playChiptuneArp(chordFreqs, time, stepDur * 0.95);
+      }
     }
 
-    // 3. Play drum track with per-song grooves.
-    if (track === 4) {
+    // 3. Play drum track with per-song grooves (reactive: drops out when losing badly).
+    if (!playDrums) {
+      // No drums - eerie tension when in last place
+    } else if (track === 4) {
       // Dirty downtempo groove - slow, head-nodding, tripped-out
       if (bar < 7) {
         // Lazy kick on 1 and the "and" of 3
@@ -2497,11 +2590,11 @@ const Sound = {
           this.playRetroKick(time, true);
         }
         // Off-beat open hats
-        if (stepInBar === 2 || stepInBar === 6 || stepInBar === 10 || stepInBar === 14) {
+        if (fullDrums && (stepInBar === 2 || stepInBar === 6 || stepInBar === 10 || stepInBar === 14)) {
           this.playRetroHiHat(time, true);
         }
         // Tight closed hats on all 16th notes for drive
-        if (stepInBar % 2 === 1 && (bar >= 2)) {
+        if (fullDrums && stepInBar % 2 === 1 && (bar >= 2)) {
           this.playRetroHiHat(time, false);
         }
         // Clap/snare on 2 and 4
@@ -2530,7 +2623,7 @@ const Sound = {
     } else if (bar < 6) {
       const chorus = bar === 4 || bar === 5;
       const hatSteps = track === 0 ? [2, 6, 10, 14] : track === 1 ? [3, 7, 10, 15] : [2, 5, 10, 13];
-      if ((chorus || track === 1) && hatSteps.includes(stepInBar)) {
+      if (fullDrums && (chorus || track === 1) && hatSteps.includes(stepInBar)) {
         this.playRetroHiHat(time);
       }
 
@@ -5440,6 +5533,12 @@ class Kart {
       }
     } else if (type === "mergerequest") {
       startMergeRequestPull(this);
+    } else if (type === "hotfix") {
+      this.boostTimer = Math.max(this.boostTimer, 150);
+      this.shieldTimer = Math.max(this.shieldTimer, 150);
+      this.invuln = Math.max(this.invuln, 150);
+      this.ultraBoostActive = true;
+      triggerQuote(this, "boost");
     }
   }
 
@@ -5799,7 +5898,7 @@ class Kart {
       this.itemRollTimer -= dt;
       if (this.itemRollTimer <= 0) {
         this.itemState = "active";
-        this.itemSlot = pick(["boost", "shield", "handling", "conflict", "dossier", "deauth", "mergerequest"]);
+        this.itemSlot = getWeightedItem(this);
         if (!this.isPlayer) {
           this.aiItemUseTimer = rand(60, 180);
         }
@@ -6215,6 +6314,8 @@ class AIKart extends Kart {
         shouldUse = getActiveKarts().some(k => k !== this && !k.finished && dist(this.x, this.y, k.x, k.y) < 150);
       } else if (this.itemSlot === "mergerequest") {
         shouldUse = rank > 1 && curvature < 0.35;
+      } else if (this.itemSlot === "hotfix") {
+        shouldUse = true;
       }
       
       if (shouldUse) {
@@ -6961,6 +7062,33 @@ function rankAll() {
     return progressValue(b) - progressValue(a);
   });
   return sorted;
+}
+
+function getWeightedItem(kart) {
+  const rankings = rankAll();
+  const totalKarts = rankings.length;
+  const rank = rankings.indexOf(kart) + 1;
+  const posRatio = totalKarts > 1 ? (rank - 1) / (totalKarts - 1) : 0;
+
+  const weights = {
+    boost:        10 + posRatio * 15,
+    shield:       10 + posRatio * 5,
+    handling:     10,
+    conflict:     12 - posRatio * 6,
+    dossier:      10 + posRatio * 5,
+    deauth:       8 - posRatio * 4,
+    mergerequest: 5 + posRatio * 15,
+    hotfix:       posRatio >= 0.7 ? (posRatio * 20) : 0
+  };
+
+  const entries = Object.entries(weights);
+  const totalWeight = entries.reduce((sum, [, w]) => sum + w, 0);
+  let roll = Math.random() * totalWeight;
+  for (const [item, w] of entries) {
+    roll -= w;
+    if (roll <= 0) return item;
+  }
+  return "boost";
 }
 
 function checkProgress(kart) {
@@ -8357,7 +8485,7 @@ function drawItemSlot(ctx, x, y, size, kart, time) {
     ctx.textBaseline = "middle";
     ctx.fillText("?", size / 2, size / 2);
   } else if (kart.itemState === "rolling") {
-    const items = ["boost", "shield", "handling", "conflict", "dossier", "deauth", "mergerequest"];
+    const items = ["boost", "shield", "handling", "conflict", "dossier", "deauth", "mergerequest", "hotfix"];
     const frameIdx = Math.floor(time * 0.05) % items.length;
     const item = items[frameIdx];
     drawItemIcon(ctx, size / 2, size / 2, size * 0.55, item, time);
@@ -8526,6 +8654,28 @@ function drawItemIcon(ctx, cx, cy, sz, item, time) {
     ctx.lineTo(sz * 0.15, sz * 0.08);
     ctx.closePath();
     ctx.fill();
+  } else if (item === "hotfix") {
+    const pulse = 0.6 + 0.4 * Math.sin(time * 0.008);
+    ctx.fillStyle = `rgba(255, 200, 0, ${pulse})`;
+    ctx.strokeStyle = "#ffcc00";
+    ctx.lineWidth = 2.5;
+    ctx.shadowBlur = 12;
+    ctx.shadowColor = "#ffcc00";
+
+    ctx.beginPath();
+    ctx.moveTo(0, -sz * 0.5);
+    ctx.lineTo(sz * 0.2, -sz * 0.1);
+    ctx.lineTo(sz * 0.5, -sz * 0.1);
+    ctx.lineTo(sz * 0.25, sz * 0.12);
+    ctx.lineTo(sz * 0.35, sz * 0.5);
+    ctx.lineTo(0, sz * 0.2);
+    ctx.lineTo(-sz * 0.35, sz * 0.5);
+    ctx.lineTo(-sz * 0.25, sz * 0.12);
+    ctx.lineTo(-sz * 0.5, -sz * 0.1);
+    ctx.lineTo(-sz * 0.2, -sz * 0.1);
+    ctx.closePath();
+    ctx.fill();
+    ctx.stroke();
   }
 
   ctx.restore();
