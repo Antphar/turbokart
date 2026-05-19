@@ -458,6 +458,42 @@
     background: rgba(255, 255, 255, 0.08);
     margin: 5px 0;
   }
+  .p2p-roster {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    margin-top: 6px;
+  }
+  .p2p-player-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 12px;
+    padding: 8px 10px;
+    border-radius: 10px;
+    background: rgba(255, 255, 255, 0.055);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    color: #ebe4ff;
+    font-size: 12px;
+    font-weight: 800;
+  }
+  .p2p-player-row.local {
+    border-color: rgba(87, 242, 255, 0.42);
+    box-shadow: 0 0 14px rgba(87, 242, 255, 0.14);
+  }
+  .p2p-player-chip {
+    color: #57f2ff;
+    font-family: "SFMono-Regular", Consolas, monospace;
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+  }
+  .p2p-start-btn {
+    display: none;
+    margin-top: 8px;
+    padding: 11px 22px;
+    font-size: 13px;
+  }
 
   /* Settings menu */
   .settings-panel {
@@ -753,6 +789,8 @@
           <div class="p2p-status">Share this code with your peer:</div>
           <div id="p2p-my-code" class="p2p-code-display">------</div>
         </div>
+        <div id="p2p-host-roster" class="p2p-roster"></div>
+        <button class="btn p2p-start-btn" id="p2p-start-race-btn" type="button">Start Race</button>
       </div>
       
       <div class="p2p-divider"></div>
@@ -765,6 +803,7 @@
           <button class="btn" id="p2p-join-btn" style="background: linear-gradient(135deg, #57f2ff, #7b75ff); padding: 10px 20px;">Join</button>
         </div>
         <div id="p2p-join-status" class="p2p-status">Enter code and click Join</div>
+        <div id="p2p-join-roster" class="p2p-roster"></div>
       </div>
       
       <!-- BACK BUTTON -->
@@ -848,12 +887,16 @@ const p2pHostBtn = document.getElementById("p2p-host-btn");
 const p2pHostStatus = document.getElementById("p2p-host-status");
 const p2pCodeBox = document.getElementById("p2p-code-box");
 const p2pMyCode = document.getElementById("p2p-my-code");
+const p2pHostRoster = document.getElementById("p2p-host-roster");
+const p2pJoinRoster = document.getElementById("p2p-join-roster");
+const p2pStartRaceBtn = document.getElementById("p2p-start-race-btn");
 const p2pJoinInput = document.getElementById("p2p-join-input");
 const p2pJoinBtn = document.getElementById("p2p-join-btn");
 const p2pJoinStatus = document.getElementById("p2p-join-status");
 const p2pBackBtn = document.getElementById("p2p-back-btn");
 
 let peer = null;
+let p2pConnections = new Map();
 let crtOverlayEnabled = false;
 
 // ---- Character Configurations ----
@@ -3676,6 +3719,7 @@ class Kart {
       if (game.p2pMode && game.p2pRole === "guest") {
         sendP2pMessage({
           type: "drop_conflict",
+          kartId: getKartId(this),
           x: dropX,
           y: dropY
         });
@@ -3689,6 +3733,7 @@ class Kart {
       if (game.p2pMode && game.p2pRole === "guest") {
         sendP2pMessage({
           type: "shoot_dossier",
+          kartId: getKartId(this),
           x: spawnX,
           y: spawnY,
           heading: this.heading
@@ -4599,6 +4644,11 @@ const game = {
   selectedMapIdx: 0,
   track: null,
   player: null,
+  player2: null,
+  remotePlayers: [],
+  p2pKartById: {},
+  p2pPlayers: [],
+  p2pLocalId: null,
   ais: [],
   particles: new ParticleSystem(),
   skidMarks: [],
@@ -4861,7 +4911,116 @@ function renderMapSelect() {
 }
 
 function getActiveKarts() {
-  return [game.player, ...(game.multiplayer && game.player2 ? [game.player2] : []), ...game.ais];
+  return [
+    game.player,
+    ...(game.multiplayer && game.player2 ? [game.player2] : []),
+    ...(game.remotePlayers || []),
+    ...game.ais
+  ].filter(Boolean);
+}
+
+function getP2pPlayerLabel(player, idx) {
+  if (player.id === "host") return "Host";
+  return "Player " + (idx + 1);
+}
+
+function getP2pRosterHtml() {
+  const players = (game.p2pPlayers && game.p2pPlayers.length)
+    ? game.p2pPlayers
+    : [{ id: game.p2pLocalId || "host", charIdx: game.selectedCharIdx || 0, joinedAt: Date.now() }];
+  return players.map((player, idx) => {
+    const char = CHARACTERS[player.charIdx || 0];
+    const localClass = player.id === game.p2pLocalId ? " local" : "";
+    return `
+      <div class="p2p-player-row${localClass}">
+        <span>${getP2pPlayerLabel(player, idx)} · ${char.name}</span>
+        <span class="p2p-player-chip">${player.id === game.p2pLocalId ? "You" : "Joined"}</span>
+      </div>
+    `;
+  }).join("");
+}
+
+function renderP2pLobby() {
+  const html = getP2pRosterHtml();
+  if (p2pHostRoster) p2pHostRoster.innerHTML = game.p2pRole === "host" ? html : "";
+  if (p2pJoinRoster) p2pJoinRoster.innerHTML = game.p2pRole === "guest" ? html : "";
+
+  if (p2pStartRaceBtn) {
+    const canStart = game.p2pRole === "host" && (game.p2pPlayers || []).length >= 2;
+    p2pStartRaceBtn.style.display = game.p2pRole === "host" ? "inline-block" : "none";
+    p2pStartRaceBtn.disabled = !canStart;
+    p2pStartRaceBtn.textContent = canStart ? "Start Race" : "Waiting For Players";
+  }
+}
+
+function ensureHostP2pPlayer() {
+  game.p2pLocalId = "host";
+  game.p2pPlayers = [{
+    id: "host",
+    charIdx: game.selectedCharIdx || 0,
+    joinedAt: Date.now()
+  }];
+  renderP2pLobby();
+}
+
+function addP2pGuest(conn) {
+  const taken = new Set(game.p2pPlayers.map(p => p.id));
+  let slot = 1;
+  while (taken.has("guest_" + slot)) slot++;
+  if (slot > 3) {
+    try { conn.send({ type: "lobby_full" }); } catch(e) {}
+    try { conn.close(); } catch(e) {}
+    return null;
+  }
+
+  const id = "guest_" + slot;
+  const usedChars = new Set(game.p2pPlayers.map(p => p.charIdx));
+  let charIdx = slot % CHARACTERS.length;
+  for (let i = 0; i < CHARACTERS.length; i++) {
+    if (!usedChars.has(i)) { charIdx = i; break; }
+  }
+
+  const player = { id, charIdx, joinedAt: Date.now() };
+  game.p2pPlayers.push(player);
+  p2pConnections.set(id, conn);
+  renderP2pLobby();
+  return player;
+}
+
+function removeP2pGuestByConn(conn) {
+  let removedId = null;
+  for (const [id, existing] of p2pConnections.entries()) {
+    if (existing === conn) {
+      removedId = id;
+      break;
+    }
+  }
+  if (!removedId) return;
+  p2pConnections.delete(removedId);
+  game.p2pPlayers = game.p2pPlayers.filter(p => p.id !== removedId);
+  renderP2pLobby();
+  broadcastP2pLobby();
+}
+
+function sendToConn(conn, data) {
+  if (conn && conn.open) conn.send(data);
+}
+
+function broadcastP2pMessage(data, exceptConn = null) {
+  for (const conn of p2pConnections.values()) {
+    if (conn !== exceptConn) sendToConn(conn, data);
+  }
+}
+
+function broadcastP2pLobby() {
+  if (game.p2pRole !== "host") return;
+  broadcastP2pMessage({
+    type: "lobby_state",
+    players: game.p2pPlayers,
+    mapIdx: game.selectedMapIdx,
+    trackIdx: Sound.trackIdx
+  });
+  renderP2pLobby();
 }
 
 function buildRace() {
@@ -4883,10 +5042,49 @@ function buildRace() {
   const fx = Math.cos(ang), fy = Math.sin(ang);
 
   game.ais = [];
+  game.player2 = null;
+  game.remotePlayers = [];
+  game.p2pKartById = {};
 
   const playerChar = CHARACTERS[game.selectedCharIdx || 0];
 
-  if (game.multiplayer) {
+  if (game.p2pMode && game.p2pPlayers && game.p2pPlayers.length) {
+    const grid = [
+      { f: 12, l: -36 },
+      { f: 0, l: 42 },
+      { f: 12, l: 42 },
+      { f: 0, l: -36 }
+    ];
+    const racePlayers = game.p2pPlayers.slice(0, 4);
+    racePlayers.forEach((p, idx) => {
+      const pos = grid[idx];
+      const x = sx + fx * pos.f + lx * pos.l;
+      const y = sy + fy * pos.f + ly * pos.l;
+      const char = CHARACTERS[p.charIdx || 0];
+      const kart = new PlayerKart(x, y, ang, char, p.id === game.p2pLocalId ? 1 : 2);
+      kart.p2pId = p.id;
+      game.p2pKartById[p.id] = kart;
+      if (p.id === game.p2pLocalId) {
+        game.player = kart;
+      } else if (!game.player2) {
+        game.player2 = kart;
+      } else {
+        game.remotePlayers.push(kart);
+      }
+    });
+
+    const usedChars = new Set(racePlayers.map(p => p.charIdx || 0));
+    const aiChars = CHARACTERS.filter((_, idx) => !usedChars.has(idx));
+    const aiSkills = [0.95, 0.97, 0.99];
+    for (let i = racePlayers.length; i < 4; i++) {
+      const pos = grid[i];
+      const x = sx + fx * pos.f + lx * pos.l;
+      const y = sy + fy * pos.f + ly * pos.l;
+      game.ais.push(new AIKart(x, y, ang, aiChars[i - racePlayers.length] || CHARACTERS[(i + 1) % CHARACTERS.length], aiSkills[i - racePlayers.length] || 0.96));
+    }
+
+    game.totalRacers = racePlayers.length + game.ais.length;
+  } else if (game.multiplayer) {
     const player2Char = CHARACTERS[game.selectedCharIdx2 !== undefined ? game.selectedCharIdx2 : 1];
     
     // Position 0 (Player 1)
@@ -5068,6 +5266,11 @@ function checkProgress(kart) {
             let allHumanFinished = true;
             if (game.player && !game.player.finished) allHumanFinished = false;
             if (game.multiplayer && game.player2 && !game.player2.finished) allHumanFinished = false;
+            if (game.remotePlayers) {
+              for (const remote of game.remotePlayers) {
+                if (!remote.finished) allHumanFinished = false;
+              }
+            }
             
             if (allHumanFinished) {
               setTimeout(() => finishRace(), 1500);
@@ -5427,6 +5630,17 @@ function update(dt, time) {
         game.player2.update(dt, game.track);
         checkProgress(game.player2);
         checkItems(game.player2);
+      }
+    }
+
+    if (game.p2pMode && game.remotePlayers) {
+      for (const remote of game.remotePlayers) {
+        if (remote.quoteTimer > 0) remote.quoteTimer -= dt;
+        if (remote.boostTimer > 0) remote.boostTimer -= dt;
+        if (remote.shieldTimer > 0) remote.shieldTimer -= dt;
+        if (remote.spinoutTimer > 0) remote.spinoutTimer -= dt;
+        if (remote.invuln > 0) remote.invuln -= dt;
+        checkProgress(remote);
       }
     }
 
@@ -6391,7 +6605,7 @@ function drawMinimap(x, y, size) {
   }
 
   // Player 2
-  if (game.multiplayer && game.player2) {
+  if (game.multiplayer && game.player2 && !game.p2pMode) {
     ctx.fillStyle = "#fff";
     ctx.strokeStyle = game.player2.color;
     ctx.lineWidth = 2;
@@ -6482,7 +6696,7 @@ function roundRect(c, x, y, w, h, r) {
 function showFinishScreen() {
   const ranking = game.finalRanking || rankAll();
   
-  if (game.multiplayer && game.player2) {
+  if (game.multiplayer && game.player2 && !game.p2pMode) {
     const p1Place = ranking.indexOf(game.player) + 1;
     const p2Place = ranking.indexOf(game.player2) + 1;
     
@@ -6671,7 +6885,7 @@ p2pHostBtn.addEventListener("click", () => {
       peer = new Peer("TKD-" + code);
       
       peer.on("open", (id) => {
-        p2pHostStatus.innerText = "Lobby active. Waiting for player...";
+        p2pHostStatus.innerText = "Lobby active. Waiting for players...";
         p2pHostStatus.className = "p2p-status ready";
         p2pMyCode.innerText = code;
         p2pCodeBox.style.display = "block";
@@ -6679,20 +6893,28 @@ p2pHostBtn.addEventListener("click", () => {
         game.p2pMode = true;
         game.p2pRole = "host";
         game.multiplayer = true;
+        ensureHostP2pPlayer();
       });
       
       peer.on("connection", (conn) => {
-        game.p2pConn = conn;
         conn.on("open", () => {
-          p2pHostStatus.innerText = "Player connected! Syncing select screen...";
-          showSelectScreen();
-          sendP2pMessage({ type: "lobby_connected" });
+          const player = addP2pGuest(conn);
+          if (!player) return;
+          p2pHostStatus.innerText = `${game.p2pPlayers.length} players in lobby. Host starts the race.`;
+          sendToConn(conn, {
+            type: "lobby_connected",
+            playerId: player.id,
+            players: game.p2pPlayers,
+            mapIdx: game.selectedMapIdx,
+            trackIdx: Sound.trackIdx
+          });
+          broadcastP2pLobby();
         });
         conn.on("data", (data) => {
-          handleP2pData(data);
+          handleP2pData(data, conn);
         });
         conn.on("close", () => {
-          handleP2pDisconnect();
+          removeP2pGuestByConn(conn);
         });
         conn.on("error", (err) => {
           p2pHostStatus.innerText = "Connection error: " + err.message;
@@ -6747,7 +6969,7 @@ p2pJoinBtn.addEventListener("click", () => {
           game.multiplayer = true;
         });
         conn.on("data", (data) => {
-          handleP2pData(data);
+          handleP2pData(data, conn);
         });
         conn.on("close", () => {
           handleP2pDisconnect();
@@ -6774,6 +6996,21 @@ p2pBackBtn.addEventListener("click", () => {
   handleP2pDisconnect();
   p2pScreen.classList.add("hidden");
   titleScreen.classList.remove("hidden");
+});
+
+p2pStartRaceBtn.addEventListener("click", () => {
+  if (game.p2pRole !== "host" || game.p2pPlayers.length < 2) return;
+  const startPacket = {
+    type: "start_race",
+    players: game.p2pPlayers,
+    mapIdx: game.selectedMapIdx,
+    trackIdx: Sound.trackIdx
+  };
+  broadcastP2pMessage(startPacket);
+  hideAll();
+  buildRace();
+  startCountdown();
+  Sound.startEngine(1);
 });
 
 function loadPeerJS(callback) {
@@ -6803,6 +7040,7 @@ function generateLobbyCode() {
 
 function getKartId(kart) {
   if (!kart) return null;
+  if (game.p2pMode && kart.p2pId) return kart.p2pId;
   if (game.p2pMode) {
     if (game.p2pRole === "host") {
       if (kart === game.player) return "host";
@@ -6824,6 +7062,9 @@ function getKartId(kart) {
 
 function getKartById(id) {
   if (!id) return null;
+  if (game.p2pMode && game.p2pKartById && game.p2pKartById[id]) {
+    return game.p2pKartById[id];
+  }
   if (game.p2pMode) {
     if (game.p2pRole === "host") {
       if (id === "host") return game.player;
@@ -6844,9 +7085,64 @@ function getKartById(id) {
 }
 
 function sendP2pMessage(data) {
+  if (game.p2pRole === "host") {
+    broadcastP2pMessage(data);
+    return;
+  }
   if (game.p2pConn && game.p2pConn.open) {
     game.p2pConn.send(data);
   }
+}
+
+function serializeKartState(kart) {
+  if (!kart) return null;
+  return {
+    x: kart.x,
+    y: kart.y,
+    heading: kart.heading,
+    vx: kart.vx,
+    vy: kart.vy,
+    boostTimer: kart.boostTimer,
+    shieldTimer: kart.shieldTimer,
+    itemSlot: kart.itemSlot,
+    itemState: kart.itemState,
+    finished: kart.finished,
+    lap: kart.lap,
+    nextCheckpoint: kart.nextCheckpoint,
+    checkpointsThisLap: kart.checkpointsThisLap,
+    finishTime: kart.finishTime,
+    activeQuote: kart.activeQuote,
+    quoteTimer: kart.quoteTimer,
+    spinoutTimer: kart.spinoutTimer,
+    coinsCollected: kart.coinsCollected,
+    mergePullTimer: kart.mergePullTimer || 0,
+    mergePullTargetId: kart.mergePullTargetId || null
+  };
+}
+
+function applyKartState(kart, p) {
+  if (!kart || !p) return;
+  kart.x = p.x;
+  kart.y = p.y;
+  kart.heading = p.heading;
+  kart.vx = p.vx;
+  kart.vy = p.vy;
+  kart.boostTimer = p.boostTimer;
+  kart.shieldTimer = p.shieldTimer;
+  kart.itemSlot = p.itemSlot;
+  kart.itemState = p.itemState;
+  kart.finished = p.finished;
+  kart.lap = p.lap;
+  if (p.nextCheckpoint !== undefined) kart.nextCheckpoint = p.nextCheckpoint;
+  if (p.checkpointsThisLap !== undefined) kart.checkpointsThisLap = p.checkpointsThisLap;
+  if (p.finishTime !== undefined) kart.finishTime = p.finishTime;
+  kart.activeQuote = p.activeQuote;
+  kart.quoteTimer = p.quoteTimer;
+  kart.spinoutTimer = p.spinoutTimer;
+  kart.coinsCollected = p.coinsCollected;
+  kart.mergePullTimer = p.mergePullTimer || 0;
+  kart.mergePullTargetId = p.mergePullTargetId || null;
+  kart.mergePullTarget = getKartById(kart.mergePullTargetId);
 }
 
 function sendHostSync() {
@@ -6855,6 +7151,10 @@ function sendHostSync() {
     type: "host_sync",
     raceTime: game.raceTime,
     state: game.state,
+    players: (game.p2pPlayers || []).map(p => ({
+      id: p.id,
+      state: serializeKartState(getKartById(p.id))
+    })),
     p2: {
       x: game.player.x,
       y: game.player.y,
@@ -6912,6 +7212,8 @@ function sendGuestSync() {
   if (!game.player) return;
   const sync = {
     type: "guest_sync",
+    playerId: game.p2pLocalId || "guest",
+    state: serializeKartState(game.player),
     p2: {
       x: game.player.x,
       y: game.player.y,
@@ -6936,6 +7238,10 @@ function sendGuestSync() {
 }
 
 function handleP2pDisconnect() {
+  for (const conn of p2pConnections.values()) {
+    try { conn.close(); } catch(e) {}
+  }
+  p2pConnections.clear();
   if (game.p2pConn) {
     try { game.p2pConn.close(); } catch(e) {}
     game.p2pConn = null;
@@ -6947,6 +7253,9 @@ function handleP2pDisconnect() {
   
   game.p2pMode = false;
   game.p2pRole = null;
+  game.p2pPlayers = [];
+  game.p2pLocalId = null;
+  game.p2pKartById = {};
   game.multiplayer = false;
   game.p1Locked = false;
   game.p2Locked = false;
@@ -6955,6 +7264,9 @@ function handleP2pDisconnect() {
   p2pHostStatus.className = "p2p-status";
   p2pCodeBox.style.display = "none";
   p2pMyCode.innerText = "------";
+  p2pHostRoster.innerHTML = "";
+  p2pJoinRoster.innerHTML = "";
+  p2pStartRaceBtn.style.display = "none";
   
   p2pJoinInput.value = "";
   p2pJoinStatus.innerText = "Enter code and click Join";
@@ -6971,16 +7283,32 @@ function handleP2pDisconnect() {
   }
 }
 
-function handleP2pData(data) {
+function handleP2pData(data, sourceConn = null) {
   if (!data) return;
 
   if (data.type === "lobby_connected") {
     game.p2pMode = true;
     game.p2pRole = "guest";
     game.multiplayer = true;
-    showSelectScreen();
-    p2pJoinStatus.innerText = "Connected! Choosing characters...";
+    game.p2pLocalId = data.playerId || "guest_1";
+    game.p2pPlayers = data.players || [];
+    game.selectedMapIdx = data.mapIdx !== undefined ? data.mapIdx : game.selectedMapIdx;
+    if (data.trackIdx !== undefined && data.trackIdx !== null) setMusicTrack(data.trackIdx);
+    renderP2pLobby();
+    p2pJoinStatus.innerText = "Connected! Waiting for host to start...";
     p2pJoinStatus.className = "p2p-status ready";
+  }
+
+  else if (data.type === "lobby_full") {
+    p2pJoinStatus.innerText = "Lobby is full!";
+    p2pJoinStatus.className = "p2p-status error";
+  }
+
+  else if (data.type === "lobby_state") {
+    game.p2pPlayers = data.players || game.p2pPlayers;
+    game.selectedMapIdx = data.mapIdx !== undefined ? data.mapIdx : game.selectedMapIdx;
+    if (data.trackIdx !== undefined && data.trackIdx !== null) setMusicTrack(data.trackIdx);
+    renderP2pLobby();
   }
 
   else if (data.type === "select_update") {
@@ -6996,8 +7324,12 @@ function handleP2pData(data) {
   }
 
   else if (data.type === "start_race") {
-    game.selectedCharIdx = data.guestCharIdx;
-    game.selectedCharIdx2 = data.hostCharIdx;
+    if (data.players) game.p2pPlayers = data.players;
+    if (data.trackIdx !== undefined && data.trackIdx !== null) setMusicTrack(data.trackIdx);
+    if (!data.players) {
+      game.selectedCharIdx = data.guestCharIdx;
+      game.selectedCharIdx2 = data.hostCharIdx;
+    }
     game.selectedMapIdx = data.mapIdx !== undefined ? data.mapIdx : 0;
     
     hideAll();
@@ -7018,6 +7350,13 @@ function handleP2pData(data) {
       }
     }
     if (data.raceTime !== undefined) game.raceTime = data.raceTime;
+
+    if (data.players) {
+      for (const playerState of data.players) {
+        if (!playerState || playerState.id === game.p2pLocalId) continue;
+        applyKartState(getKartById(playerState.id), playerState.state);
+      }
+    }
 
     if (game.player2 && data.p2) {
       const p = data.p2;
@@ -7099,6 +7438,13 @@ function handleP2pData(data) {
   }
 
   else if (data.type === "guest_sync") {
+    if (data.playerId && data.state) {
+      applyKartState(getKartById(data.playerId), data.state);
+      if (game.p2pRole === "host") {
+        broadcastP2pMessage(data, sourceConn);
+      }
+      return;
+    }
     if (game.player2 && data.p2) {
       const p = data.p2;
       game.player2.x = p.x;
@@ -7123,8 +7469,9 @@ function handleP2pData(data) {
   }
 
   else if (data.type === "shoot_dossier") {
-    if (game.player2) {
-      const d = new DossierProjectile(data.x, data.y, data.heading, game.player2);
+    const ownerKart = getKartById(data.kartId) || game.player2;
+    if (ownerKart) {
+      const d = new DossierProjectile(data.x, data.y, data.heading, ownerKart);
       game.hazards.push(d);
     }
   }
@@ -7147,6 +7494,9 @@ function handleP2pData(data) {
     const kart = getKartById(data.kartId);
     if (kart) {
       triggerShootEffect(kart, data.item);
+    }
+    if (game.p2pRole === "host") {
+      broadcastP2pMessage(data, sourceConn);
     }
   }
 

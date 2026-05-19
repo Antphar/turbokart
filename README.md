@@ -24,7 +24,8 @@ Every single sound effect and music track is synthesized on-the-fly using the br
 
 ### 🕹️ Authoritative Peer-to-Peer Multiplayer
 * Powered by **PeerJS (WebRTC)**.
-* Play with your friends instantly over local networks or across the world with direct peer connections.
+* Play with up to **4 online racers** over local networks or across the world with direct peer connections.
+* Host-managed lobbies show joined players and let the host start the race when ready.
 * Host-guest synchronization for local AI bots, item boxes, coin pickups, and hazards.
 * Dynamic guest input and coordinate synchronization packets.
 * Synchronized item activation events with spatialized projectile and shockwave feedback.
