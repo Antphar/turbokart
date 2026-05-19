@@ -1,0 +1,17 @@
+# OS-specific files
+.DS_Store
+Thumbs.db
+
+# IDE and editor files
+.vscode/
+.idea/
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.swp
+
+# Node modules (if any are installed)
+node_modules/
+package-lock.json
+npm-debug.log
