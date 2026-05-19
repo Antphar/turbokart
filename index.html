@@ -1480,6 +1480,90 @@ function triggerQuote(kart, event) {
   kart.quoteTimer = 130; // ~2.2 seconds display
 }
 
+function getActiveHumanKarts() {
+  return getActiveKarts().filter(k => k && k.isPlayer && !k.finished && !k.eliminated);
+}
+
+function getDragonTarget() {
+  const humans = getActiveHumanKarts();
+  if (!humans.length) return null;
+  return humans.slice().sort((a, b) => progressValue(a) - progressValue(b))[0];
+}
+
+function areAllHumansDone() {
+  const humans = getActiveKarts().filter(k => k && k.isPlayer);
+  return humans.length > 0 && humans.every(k => k.finished || k.eliminated);
+}
+
+function scheduleFinishRace(delay = 900) {
+  if (game.finishScheduled || game.state === STATE.FINISHED) return;
+  game.finishScheduled = true;
+  setTimeout(() => {
+    game.finishScheduled = false;
+    if (areAllHumansDone()) finishRace();
+  }, delay);
+}
+
+function eliminateKart(kart, label = "ELIMINATED!", x = null, y = null, color = "#ff3366") {
+  if (!kart || kart.eliminated) return;
+  const hitX = x !== null ? x : kart.x;
+  const hitY = y !== null ? y : kart.y;
+  kart.eliminated = true;
+  kart.finished = true;
+  kart.finishTime = game.raceTime;
+  kart.spinoutTimer = Math.max(kart.spinoutTimer, 90);
+  kart.vx = 0;
+  kart.vy = 0;
+  triggerQuote(kart, "crash");
+  if (kart.isPlayer) {
+    Sound.crash();
+    game.shake = Math.max(game.shake, 14);
+    game.flash = Math.max(game.flash, 10);
+  }
+  if (game.particles) {
+    game.particles.burst(hitX, hitY, color, 44, { type: "spark", spdMin: 3, spdMax: 8 });
+    game.particles.add({
+      type: "text",
+      text: label,
+      x: hitX,
+      y: hitY - 34,
+      vx: 0,
+      vy: -1.1,
+      life: 80,
+      maxLife: 80,
+      size: 22,
+      color,
+      drag: 0.98
+    });
+  }
+  if (areAllHumansDone()) {
+    scheduleFinishRace(900);
+  }
+}
+
+function absorbFatalHitWithShield(kart, x, y) {
+  if (!kart || kart.shieldTimer <= 0) return false;
+  kart.shieldTimer = 0;
+  Sound.spatialTone(x, y, 620, 0.12, "square", 0.12, 260);
+  if (game.particles) {
+    game.particles.burst(x, y, "#78dcff", 28, { type: "spark", spdMin: 2, spdMax: 5 });
+    game.particles.add({
+      type: "text",
+      text: "SHIELD BLOCK!",
+      x,
+      y: y - 28,
+      vx: 0,
+      vy: -1.0,
+      life: 48,
+      maxLife: 48,
+      size: 16,
+      color: "#78dcff",
+      drag: 0.98
+    });
+  }
+  return true;
+}
+
 function drawSpeechBubble(ctx, kart) {
   if (!kart.activeQuote || kart.quoteTimer <= 0) return;
 
@@ -1736,40 +1820,227 @@ const Sound = {
   },
 
   coin() {
-    this.tone(1320, 0.07, "square", 0.14);
-    setTimeout(() => this.tone(1980, 0.10, "square", 0.12), 55);
+    if (!this.ctx || this.muted) return;
+    const t = this.ctx.currentTime;
+    const osc1 = this.ctx.createOscillator();
+    const osc2 = this.ctx.createOscillator();
+    const g = this.ctx.createGain();
+    const filter = this.ctx.createBiquadFilter();
+    filter.type = "lowpass";
+    filter.frequency.setValueAtTime(4000, t);
+    filter.frequency.exponentialRampToValueAtTime(8000, t + 0.06);
+    osc1.type = "square";
+    osc1.frequency.setValueAtTime(1320, t);
+    osc2.type = "triangle";
+    osc2.frequency.setValueAtTime(1320, t);
+    g.gain.setValueAtTime(0.001, t);
+    g.gain.linearRampToValueAtTime(0.16, t + 0.005);
+    g.gain.exponentialRampToValueAtTime(0.001, t + 0.08);
+    osc1.connect(filter); osc2.connect(filter);
+    filter.connect(g); g.connect(this.master);
+    osc1.start(t); osc1.stop(t + 0.09);
+    osc2.start(t); osc2.stop(t + 0.09);
+    setTimeout(() => {
+      const t2 = this.ctx.currentTime;
+      const o = this.ctx.createOscillator();
+      const o2 = this.ctx.createOscillator();
+      const g2 = this.ctx.createGain();
+      o.type = "square"; o.frequency.value = 1980;
+      o2.type = "sine"; o2.frequency.value = 1980 * 2;
+      g2.gain.setValueAtTime(0.001, t2);
+      g2.gain.linearRampToValueAtTime(0.13, t2 + 0.005);
+      g2.gain.exponentialRampToValueAtTime(0.001, t2 + 0.12);
+      o.connect(g2); o2.connect(g2); g2.connect(this.master);
+      o.start(t2); o.stop(t2 + 0.13);
+      o2.start(t2); o2.stop(t2 + 0.13);
+    }, 55);
   },
   boost() {
-    this.tone(220, 0.45, "sawtooth", 0.16, 880);
-    this.noise(0.25, 0.08, 1200);
+    if (!this.ctx || this.muted) return;
+    const t = this.ctx.currentTime;
+    const osc = this.ctx.createOscillator();
+    const osc2 = this.ctx.createOscillator();
+    const g = this.ctx.createGain();
+    const filter = this.ctx.createBiquadFilter();
+    filter.type = "lowpass";
+    filter.frequency.setValueAtTime(300, t);
+    filter.frequency.exponentialRampToValueAtTime(3500, t + 0.35);
+    filter.Q.setValueAtTime(3, t);
+    osc.type = "sawtooth";
+    osc.frequency.setValueAtTime(180, t);
+    osc.frequency.exponentialRampToValueAtTime(960, t + 0.4);
+    osc2.type = "square";
+    osc2.frequency.setValueAtTime(90, t);
+    osc2.frequency.exponentialRampToValueAtTime(480, t + 0.4);
+    g.gain.setValueAtTime(0.001, t);
+    g.gain.linearRampToValueAtTime(0.18, t + 0.02);
+    g.gain.setValueAtTime(0.14, t + 0.15);
+    g.gain.exponentialRampToValueAtTime(0.001, t + 0.5);
+    osc.connect(filter); osc2.connect(filter);
+    filter.connect(g); g.connect(this.master);
+    osc.start(t); osc.stop(t + 0.52);
+    osc2.start(t); osc2.stop(t + 0.52);
+    this.noise(0.2, 0.06, 1800);
   },
   crash() {
-    this.tone(160, 0.22, "square", 0.18, 60);
-    this.noise(0.25, 0.16, 200);
+    if (!this.ctx || this.muted) return;
+    const t = this.ctx.currentTime;
+    const osc = this.ctx.createOscillator();
+    const g = this.ctx.createGain();
+    const filter = this.ctx.createBiquadFilter();
+    filter.type = "lowpass";
+    filter.frequency.setValueAtTime(800, t);
+    filter.frequency.exponentialRampToValueAtTime(100, t + 0.2);
+    osc.type = "sawtooth";
+    osc.frequency.setValueAtTime(180, t);
+    osc.frequency.exponentialRampToValueAtTime(40, t + 0.18);
+    g.gain.setValueAtTime(0.001, t);
+    g.gain.linearRampToValueAtTime(0.22, t + 0.003);
+    g.gain.exponentialRampToValueAtTime(0.001, t + 0.25);
+    osc.connect(filter); filter.connect(g); g.connect(this.master);
+    osc.start(t); osc.stop(t + 0.27);
+    this.noise(0.3, 0.18, 150);
+    setTimeout(() => this.noise(0.15, 0.06, 400), 40);
   },
   lap() {
-    [523, 659, 784].forEach((f, i) => setTimeout(() => this.tone(f, 0.16, "square", 0.16), i * 90));
+    if (!this.ctx || this.muted) return;
+    const freqs = [523, 659, 784, 988];
+    freqs.forEach((f, i) => {
+      setTimeout(() => {
+        const t = this.ctx.currentTime;
+        const osc = this.ctx.createOscillator();
+        const osc2 = this.ctx.createOscillator();
+        const g = this.ctx.createGain();
+        osc.type = "triangle"; osc.frequency.value = f;
+        osc2.type = "sine"; osc2.frequency.value = f * 2;
+        g.gain.setValueAtTime(0.001, t);
+        g.gain.linearRampToValueAtTime(0.15, t + 0.01);
+        g.gain.exponentialRampToValueAtTime(0.001, t + 0.18);
+        osc.connect(g); osc2.connect(g); g.connect(this.master);
+        osc.start(t); osc.stop(t + 0.2);
+        osc2.start(t); osc2.stop(t + 0.2);
+      }, i * 80);
+    });
   },
   countdown(go) {
+    if (!this.ctx || this.muted) return;
     if (go) {
-      [880, 1320].forEach((f, i) => setTimeout(() => this.tone(f, 0.32, "square", 0.22), i * 60));
+      const t = this.ctx.currentTime;
+      const osc = this.ctx.createOscillator();
+      const osc2 = this.ctx.createOscillator();
+      const g = this.ctx.createGain();
+      osc.type = "square"; osc.frequency.value = 880;
+      osc2.type = "triangle"; osc2.frequency.value = 1760;
+      g.gain.setValueAtTime(0.001, t);
+      g.gain.linearRampToValueAtTime(0.2, t + 0.008);
+      g.gain.exponentialRampToValueAtTime(0.001, t + 0.35);
+      osc.connect(g); osc2.connect(g); g.connect(this.master);
+      osc.start(t); osc.stop(t + 0.37);
+      osc2.start(t); osc2.stop(t + 0.37);
+      setTimeout(() => {
+        const t2 = this.ctx.currentTime;
+        const o = this.ctx.createOscillator();
+        const g2 = this.ctx.createGain();
+        o.type = "square"; o.frequency.value = 1320;
+        g2.gain.setValueAtTime(0.001, t2);
+        g2.gain.linearRampToValueAtTime(0.18, t2 + 0.005);
+        g2.gain.exponentialRampToValueAtTime(0.001, t2 + 0.3);
+        o.connect(g2); g2.connect(this.master);
+        o.start(t2); o.stop(t2 + 0.32);
+      }, 70);
     } else {
-      this.tone(523, 0.18, "square", 0.16);
+      const t = this.ctx.currentTime;
+      const osc = this.ctx.createOscillator();
+      const g = this.ctx.createGain();
+      osc.type = "triangle"; osc.frequency.value = 523;
+      g.gain.setValueAtTime(0.001, t);
+      g.gain.linearRampToValueAtTime(0.18, t + 0.008);
+      g.gain.exponentialRampToValueAtTime(0.001, t + 0.22);
+      osc.connect(g); g.connect(this.master);
+      osc.start(t); osc.stop(t + 0.24);
     }
   },
   finish() {
-    [523, 659, 784, 1047, 1319].forEach((f, i) => setTimeout(() => this.tone(f, 0.28, "square", 0.18), i * 95));
+    if (!this.ctx || this.muted) return;
+    const notes = [523, 659, 784, 1047, 1319, 1568];
+    notes.forEach((f, i) => {
+      setTimeout(() => {
+        const t = this.ctx.currentTime;
+        const osc = this.ctx.createOscillator();
+        const osc2 = this.ctx.createOscillator();
+        const g = this.ctx.createGain();
+        const filter = this.ctx.createBiquadFilter();
+        filter.type = "lowpass";
+        filter.frequency.value = 3000 + i * 800;
+        osc.type = "triangle"; osc.frequency.value = f;
+        osc2.type = "sine"; osc2.frequency.value = f * 1.5;
+        g.gain.setValueAtTime(0.001, t);
+        g.gain.linearRampToValueAtTime(0.16 - i * 0.01, t + 0.01);
+        g.gain.exponentialRampToValueAtTime(0.001, t + 0.35);
+        osc.connect(filter); osc2.connect(filter);
+        filter.connect(g); g.connect(this.master);
+        osc.start(t); osc.stop(t + 0.37);
+        osc2.start(t); osc2.stop(t + 0.37);
+      }, i * 85);
+    });
   },
   itembox() {
-    this.tone(660, 0.08, "square", 0.10);
-    setTimeout(() => this.tone(990, 0.08, "square", 0.10), 60);
-    setTimeout(() => this.tone(1320, 0.14, "square", 0.10), 120);
+    if (!this.ctx || this.muted) return;
+    const freqs = [660, 990, 1320];
+    freqs.forEach((f, i) => {
+      setTimeout(() => {
+        const t = this.ctx.currentTime;
+        const osc = this.ctx.createOscillator();
+        const osc2 = this.ctx.createOscillator();
+        const g = this.ctx.createGain();
+        osc.type = "square"; osc.frequency.value = f;
+        osc2.type = "triangle"; osc2.frequency.value = f * 1.01;
+        g.gain.setValueAtTime(0.001, t);
+        g.gain.linearRampToValueAtTime(0.12, t + 0.005);
+        g.gain.exponentialRampToValueAtTime(0.001, t + (i === 2 ? 0.18 : 0.10));
+        osc.connect(g); osc2.connect(g); g.connect(this.master);
+        osc.start(t); osc.stop(t + 0.2);
+        osc2.start(t); osc2.stop(t + 0.2);
+      }, i * 55);
+    });
   },
   shield() {
-    this.tone(440, 0.2, "triangle", 0.12, 880);
+    if (!this.ctx || this.muted) return;
+    const t = this.ctx.currentTime;
+    const osc = this.ctx.createOscillator();
+    const osc2 = this.ctx.createOscillator();
+    const g = this.ctx.createGain();
+    const filter = this.ctx.createBiquadFilter();
+    filter.type = "bandpass";
+    filter.frequency.setValueAtTime(600, t);
+    filter.frequency.exponentialRampToValueAtTime(2400, t + 0.15);
+    filter.Q.setValueAtTime(2, t);
+    osc.type = "triangle"; osc.frequency.setValueAtTime(440, t);
+    osc.frequency.exponentialRampToValueAtTime(880, t + 0.2);
+    osc2.type = "sine"; osc2.frequency.setValueAtTime(660, t);
+    osc2.frequency.exponentialRampToValueAtTime(1320, t + 0.2);
+    g.gain.setValueAtTime(0.001, t);
+    g.gain.linearRampToValueAtTime(0.14, t + 0.02);
+    g.gain.exponentialRampToValueAtTime(0.001, t + 0.28);
+    osc.connect(filter); osc2.connect(filter);
+    filter.connect(g); g.connect(this.master);
+    osc.start(t); osc.stop(t + 0.3);
+    osc2.start(t); osc2.stop(t + 0.3);
   },
   bump() {
-    this.tone(220, 0.08, "square", 0.10, 110);
+    if (!this.ctx || this.muted) return;
+    const t = this.ctx.currentTime;
+    const osc = this.ctx.createOscillator();
+    const g = this.ctx.createGain();
+    osc.type = "sawtooth";
+    osc.frequency.setValueAtTime(260, t);
+    osc.frequency.exponentialRampToValueAtTime(80, t + 0.06);
+    g.gain.setValueAtTime(0.001, t);
+    g.gain.linearRampToValueAtTime(0.14, t + 0.003);
+    g.gain.exponentialRampToValueAtTime(0.001, t + 0.09);
+    osc.connect(g); g.connect(this.master);
+    osc.start(t); osc.stop(t + 0.1);
+    this.noise(0.06, 0.08, 300);
   },
 
   // Dual Synthesizer Engines
@@ -2051,10 +2322,17 @@ const Sound = {
     },
     {
       name: "Midnight House Circuit",
-      tempo: 126,
+      tempo: 128,
       icon: "◆",
       color: "#b983ff",
-      style: "Modern Tech House"
+      style: "Heavy Modern Banger"
+    },
+    {
+      name: "Velvet Haze Crawl",
+      tempo: 85,
+      icon: "🌀",
+      color: "#ff6b35",
+      style: "Dirty Downtempo"
     }
   ],
   trackIdx: null,
@@ -2092,7 +2370,7 @@ const Sound = {
     this.tempo = t.tempo;
 
     this.musicGain = this.ctx.createGain();
-    this.musicGain.gain.value = 0.08; // quiet, pleasant background volume
+    this.musicGain.gain.value = this.trackIdx === 3 ? 0.10 : this.trackIdx === 4 ? 0.11 : 0.08;
     this.musicGain.connect(this.master);
 
     this.nextNoteTime = this.ctx.currentTime + 0.1;
@@ -2116,16 +2394,36 @@ const Sound = {
     this.showTrackToast();
   },
 
-  stopMusic() {
+  stopMusic(fade = false) {
     this.isPlayingMusic = false;
     if (this.musicInterval) {
       clearTimeout(this.musicInterval);
       this.musicInterval = null;
     }
     if (this.musicGain) {
-      try { this.musicGain.disconnect(); } catch (e) {}
+      const oldGain = this.musicGain;
+      if (fade && this.ctx) {
+        const now = this.ctx.currentTime;
+        oldGain.gain.setValueAtTime(oldGain.gain.value, now);
+        oldGain.gain.exponentialRampToValueAtTime(0.0001, now + 0.15);
+        setTimeout(() => { try { oldGain.disconnect(); } catch (e) {} }, 200);
+      } else {
+        try { oldGain.disconnect(); } catch (e) {}
+      }
       this.musicGain = null;
     }
+  },
+
+  switchTrack(newIdx) {
+    const safeIdx = Math.floor(Math.max(0, Math.min(newIdx, this.tracks.length - 1)));
+    this.stopMusic(true);
+    this.trackIdx = safeIdx;
+    const t = this.tracks[safeIdx];
+    this.tempo = t.tempo;
+    if (game.player && game.player.lap >= TOTAL_LAPS - 1) {
+      this.tempo = t.tempo + 18;
+    }
+    setTimeout(() => { this.startMusic(); }, 60);
   },
 
   scheduleStep(step, time) {
@@ -2137,33 +2435,89 @@ const Sound = {
     // 1. Play bass groove
     const bassFreq = this.getBassFreq(step);
     if (bassFreq) {
-      this.playBassNote(bassFreq, time, stepDur * (track === 3 ? 1.35 : 1.05), step);
+      this.playBassNote(bassFreq, time, stepDur * (track === 3 ? 1.35 : track === 4 ? 2.8 : 1.05), step);
     }
 
     // 2. Play melody note if any
     const melFreq = this.getMelodyNote(step);
     if (melFreq) {
-      this.playMelodyNote(melFreq, time, stepDur * (track === 3 ? 2.6 : 1.8));
+      this.playMelodyNote(melFreq, time, stepDur * (track === 3 ? 2.6 : track === 4 ? 4.5 : 1.8));
     }
 
-    // 2b. Chords/arps: retro sparkle for chiptune, rounded stabs for house.
-    if (track === 3 && bar < 6 && (stepInBar === 2 || stepInBar === 6 || stepInBar === 10 || stepInBar === 14)) {
+    // 2b. Chords/arps: retro sparkle for chiptune, rounded stabs for house, pads for downtempo.
+    if (track === 4 && bar < 6 && (stepInBar === 0)) {
+      this.playDowntempoPad(this.getChordFreqs(track, bar), time, stepDur * 14);
+    } else if (track === 3 && bar < 6 && (stepInBar === 2 || stepInBar === 6 || stepInBar === 10 || stepInBar === 14)) {
       this.playHouseChord(this.getChordFreqs(track, bar), time, stepDur * 2.8);
-    } else if (track !== 3 && bar < 6 && ((track === 1 && (stepInBar === 3 || stepInBar === 7 || stepInBar === 11 || stepInBar === 15)) || (track !== 1 && stepInBar % 4 === 1))) {
+    } else if (track !== 3 && track !== 4 && bar < 6 && ((track === 1 && (stepInBar === 3 || stepInBar === 7 || stepInBar === 11 || stepInBar === 15)) || (track !== 1 && stepInBar % 4 === 1))) {
       const chordFreqs = this.getChordFreqs(track, bar);
       this.playChiptuneArp(chordFreqs, time, stepDur * 0.95);
     }
 
     // 3. Play drum track with per-song grooves.
-    if (track === 3) {
-      if (bar !== 6 && (stepInBar === 0 || stepInBar === 4 || stepInBar === 8 || stepInBar === 12)) {
-        this.playRetroKick(time);
+    if (track === 4) {
+      // Dirty downtempo groove - slow, head-nodding, tripped-out
+      if (bar < 7) {
+        // Lazy kick on 1 and the "and" of 3
+        if (stepInBar === 0 || stepInBar === 10) {
+          this.playRetroKick(time, true);
+        }
+        // Snare on 2 and 4 (ghost on offbeats)
+        if (stepInBar === 4 || stepInBar === 12) {
+          this.playRetroSnare(time, 0.85);
+        }
+        if (bar >= 2 && (stepInBar === 7 || stepInBar === 15)) {
+          this.playRetroSnare(time, 0.25);
+        }
+        // Sparse hats - triplet feel on certain bars
+        if (bar % 2 === 0 && (stepInBar === 2 || stepInBar === 6 || stepInBar === 14)) {
+          this.playRetroHiHat(time, false);
+        }
+        if (bar % 2 === 1 && (stepInBar === 2 || stepInBar === 8 || stepInBar === 14)) {
+          this.playRetroHiHat(time, true);
+        }
       }
-      if (bar !== 6 && (stepInBar === 4 || stepInBar === 12)) {
-        this.playRetroSnare(time, 0.75);
+      // Bar 7: Slow build fill
+      if (bar === 7 && stepInBar >= 8) {
+        this.playRetroSnare(time, (stepInBar - 7) / 6.0);
       }
-      if (bar < 7 && (stepInBar === 2 || stepInBar === 6 || stepInBar === 10 || stepInBar === 14 || ((bar === 4 || bar === 5) && stepInBar % 4 === 3))) {
-        this.playRetroHiHat(time);
+    } else if (track === 3) {
+      // Heavy modern four-on-the-floor with layered percussion
+      if (bar !== 6) {
+        // Punchy kick on every beat
+        if (stepInBar === 0 || stepInBar === 4 || stepInBar === 8 || stepInBar === 12) {
+          this.playRetroKick(time, true);
+        }
+        // Off-beat open hats
+        if (stepInBar === 2 || stepInBar === 6 || stepInBar === 10 || stepInBar === 14) {
+          this.playRetroHiHat(time, true);
+        }
+        // Tight closed hats on all 16th notes for drive
+        if (stepInBar % 2 === 1 && (bar >= 2)) {
+          this.playRetroHiHat(time, false);
+        }
+        // Clap/snare on 2 and 4
+        if (stepInBar === 4 || stepInBar === 12) {
+          this.playClap(time, 1.0);
+          this.playRetroSnare(time, 0.6);
+        }
+        // Ghost snares for groove
+        if ((bar >= 4) && (stepInBar === 7 || stepInBar === 15)) {
+          this.playRetroSnare(time, 0.3);
+        }
+      } else {
+        // Bar 6: Breakdown, sparse percussion
+        if (stepInBar === 0 || stepInBar === 8) {
+          this.playRetroKick(time, true);
+        }
+        if (stepInBar === 4 || stepInBar === 12) {
+          this.playClap(time, 0.7);
+        }
+      }
+      // Fill on bar 7
+      if (bar === 7 && stepInBar >= 8) {
+        this.playRetroSnare(time, (stepInBar - 7) / 8.0);
+        if (stepInBar >= 12) this.playClap(time, (stepInBar - 11) / 5.0);
       }
     } else if (bar < 6) {
       const chorus = bar === 4 || bar === 5;
@@ -2230,12 +2584,24 @@ const Sound = {
     if (track === 3) {
       const roots = [43.65, 51.91, 38.89, 58.27, 43.65, 51.91, 46.25, 58.27];
       const patterns = [
-        [null, null, 1, null, null, null, 1, 1.5, null, null, 1, null, null, null, 2, null],
-        [null, null, 1, 1.5, null, null, 1, null, null, null, 2, null, null, 1.5, 1, null],
-        [null, null, 1, null, null, 1.5, 1, null, null, null, 2, null, null, null, 1, 1.5],
-        [null, null, 1, null, null, null, 1.5, null, null, null, 1, 2, null, null, 1.5, null]
+        [1, null, 1, 1.5, null, null, 1, null, 1.5, null, 1, null, 2, null, 1.5, null],
+        [1, null, 1, null, 1.5, null, 1, 2, null, null, 1, null, 1.5, null, 2, null],
+        [1, null, 1.5, null, 1, null, 2, null, 1, null, 1.5, null, 1, 2, null, 1.5],
+        [1, null, 1, null, 2, null, 1.5, null, 1, null, 1, 1.5, null, null, 2, null]
       ];
-      const ratio = (bar >= 6 ? [null, null, 1, null, null, null, null, null, null, null, 1.5, null, null, null, 2, null] : patterns[bar % patterns.length])[stepInBar];
+      const ratio = (bar >= 6 ? [1, null, null, null, 1.5, null, null, null, 1, null, null, null, 2, null, null, null] : patterns[bar % patterns.length])[stepInBar];
+      return ratio ? roots[bar] * ratio : null;
+    }
+
+    if (track === 4) {
+      const roots = [36.71, 41.20, 32.70, 36.71, 36.71, 41.20, 34.65, 41.20];
+      const patterns = [
+        [1, null, null, null, null, 1.5, null, null, 1, null, null, 2, null, null, null, null],
+        [1, null, null, 1.5, null, null, null, null, 1, null, null, null, null, 2, null, null],
+        [1, null, null, null, null, null, 1.5, null, null, null, 1, null, null, null, 2, null],
+        [1, null, null, null, 1.5, null, null, 2, null, null, null, null, 1, null, null, null]
+      ];
+      const ratio = (bar >= 6 ? [1, null, null, null, null, null, null, null, 1.5, null, null, null, null, null, null, null] : patterns[bar % patterns.length])[stepInBar];
       return ratio ? roots[bar] * ratio : null;
     }
 
@@ -2325,6 +2691,24 @@ const Sound = {
       ]);
     }
 
+    if (track === 4) {
+      if (bar === 6) {
+        return [293.66, null, null, null, null, null, 349.23, null, null, null, null, null, 329.63, null, null, null][stepInBar];
+      } else if (bar === 7) {
+        return [261.63, null, null, null, 293.66, null, null, null, 329.63, null, null, null, null, null, 293.66, null][stepInBar];
+      }
+      return this.getPatternNote(step, [
+        [0, 329.63], [7, 293.66], [14, 349.23],
+        [22, 311.13], [30, 293.66],
+        [36, 329.63], [44, 369.99], [50, 349.23],
+        [58, 293.66],
+        [66, 329.63], [74, 261.63], [80, 293.66],
+        [88, 349.23], [95, 311.13],
+        [100, 329.63], [110, 293.66], [118, 261.63],
+        [124, 293.66]
+      ]);
+    }
+
     return null;
   },
 
@@ -2333,58 +2717,87 @@ const Sound = {
     const bar = Math.floor(step / 16);
     const stepInBar = step % 16;
     const track = this.trackIdx || 0;
+    const isModern = track === 3;
+    const isDowntempo = track === 4;
     
-    // 1. Deep sub-bass oscillator (clean triangle wave 1 octave below)
     const subOsc = this.ctx.createOscillator();
-    subOsc.type = "triangle";
+    subOsc.type = (isModern || isDowntempo) ? "sine" : "triangle";
     subOsc.frequency.setValueAtTime(freq / 2, time);
 
-    // 2. Gritty mid-range oscillator (sawtooth at fundamental frequency)
     const gritOsc = this.ctx.createOscillator();
-    gritOsc.type = "sawtooth";
+    gritOsc.type = isModern ? "square" : "sawtooth";
     gritOsc.frequency.setValueAtTime(freq, time);
-    gritOsc.detune.setValueAtTime(8, time); // Subtle detuning for analog thickness
+    gritOsc.detune.setValueAtTime(isDowntempo ? 15 : isModern ? 12 : 8, time);
 
-    // 3. Waveshaping soft-saturation curve for grit warmth
     const dist = this.ctx.createWaveShaper();
-    if (!this.distCurve) {
+    if (!this.distCurve || !this.heavyDistCurve || !this.dirtyDistCurve) {
       const n = 256;
-      const curve = new Float32Array(n);
-      for (let i = 0; i < n; ++i) {
-        const x = (i * 2) / n - 1;
-        curve[i] = Math.tanh(x * 2.5); // Rich soft-clipping saturation
+      if (!this.distCurve) {
+        const curve = new Float32Array(n);
+        for (let i = 0; i < n; ++i) {
+          const x = (i * 2) / n - 1;
+          curve[i] = Math.tanh(x * 2.5);
+        }
+        this.distCurve = curve;
       }
-      this.distCurve = curve;
+      if (!this.heavyDistCurve) {
+        const curve = new Float32Array(n);
+        for (let i = 0; i < n; ++i) {
+          const x = (i * 2) / n - 1;
+          curve[i] = Math.tanh(x * 5.0) * 0.9 + Math.sin(x * Math.PI) * 0.1;
+        }
+        this.heavyDistCurve = curve;
+      }
+      if (!this.dirtyDistCurve) {
+        const curve = new Float32Array(n);
+        for (let i = 0; i < n; ++i) {
+          const x = (i * 2) / n - 1;
+          curve[i] = Math.sign(x) * Math.pow(Math.abs(x), 0.4) * 0.85 + Math.tanh(x * 4) * 0.15;
+        }
+        this.dirtyDistCurve = curve;
+      }
     }
-    dist.curve = this.distCurve;
+    dist.curve = isDowntempo ? this.dirtyDistCurve : isModern ? this.heavyDistCurve : this.distCurve;
     dist.oversample = "4x";
 
-    // 4. Low-pass filter with resonant sweep (acid-synth style or dark drone style)
     const filter = this.ctx.createBiquadFilter();
     filter.type = "lowpass";
-    filter.Q.setValueAtTime(bar >= 6 ? 1.4 : (track === 1 ? 4.5 : 2.8), time);
-    if (bar >= 6) {
-      filter.frequency.setValueAtTime(track === 3 ? 420 : 250, time);
-      filter.frequency.exponentialRampToValueAtTime(100, time + dur * 0.95);
-    } else if (track === 3) {
-      filter.frequency.setValueAtTime(900, time);
-      filter.frequency.exponentialRampToValueAtTime(180, time + dur * 0.9);
+    if (isDowntempo) {
+      filter.Q.setValueAtTime(bar >= 6 ? 1.0 : 3.0, time);
+      if (bar >= 6) {
+        filter.frequency.setValueAtTime(350, time);
+        filter.frequency.exponentialRampToValueAtTime(80, time + dur * 0.95);
+      } else {
+        filter.frequency.setValueAtTime(650, time);
+        filter.frequency.exponentialRampToValueAtTime(100, time + dur * 0.9);
+      }
+    } else if (isModern) {
+      filter.Q.setValueAtTime(bar >= 6 ? 2.0 : 5.5, time);
+      if (bar >= 6) {
+        filter.frequency.setValueAtTime(600, time);
+        filter.frequency.exponentialRampToValueAtTime(120, time + dur * 0.9);
+      } else {
+        filter.frequency.setValueAtTime(1400, time);
+        filter.frequency.exponentialRampToValueAtTime(160, time + dur * 0.8);
+      }
     } else {
-      filter.frequency.setValueAtTime(track === 1 ? 760 : 620, time);
-      filter.frequency.exponentialRampToValueAtTime(100, time + dur * 0.85);
+      filter.Q.setValueAtTime(bar >= 6 ? 1.4 : (track === 1 ? 4.5 : 2.8), time);
+      if (bar >= 6) {
+        filter.frequency.setValueAtTime(250, time);
+        filter.frequency.exponentialRampToValueAtTime(100, time + dur * 0.95);
+      } else {
+        filter.frequency.setValueAtTime(track === 1 ? 760 : 620, time);
+        filter.frequency.exponentialRampToValueAtTime(100, time + dur * 0.85);
+      }
     }
 
-    // 5. Shared dynamic gain envelope (punchy attack, exponential decay)
     const gain = this.ctx.createGain();
     const accent = (stepInBar === 0 || stepInBar === 8) ? 1.0 : 0.82;
-    const peak = (track === 3 ? 0.24 : track === 1 ? 0.22 : 0.20) * accent;
+    const peak = (isDowntempo ? 0.28 : isModern ? 0.32 : track === 1 ? 0.22 : 0.20) * accent;
     gain.gain.setValueAtTime(0.001, time);
-    gain.gain.linearRampToValueAtTime(peak, time + 0.015);
+    gain.gain.linearRampToValueAtTime(peak, time + (isDowntempo ? 0.04 : isModern ? 0.005 : 0.015));
     gain.gain.exponentialRampToValueAtTime(0.001, time + dur);
 
-    // Routing:
-    // gritOsc -> Waveshaper -> Filter -> Gain -> musicGain
-    // subOsc -> Filter -> Gain -> musicGain
     gritOsc.connect(dist);
     dist.connect(filter);
     subOsc.connect(filter);
@@ -2432,7 +2845,73 @@ const Sound = {
       if (bar === 2 || bar === 6) return [311.13, 392.00, 466.16, 622.25];
       if (bar === 3 || bar === 7) return [293.66, 349.23, 466.16, 587.33];
     }
+    if (track === 4) {
+      // Em7, Am9, Dm7, G7b9 - dark jazzy downtempo voicings
+      if (bar === 0 || bar === 4) return [164.81, 196.00, 246.94, 293.66]; // Em7
+      if (bar === 1 || bar === 5) return [220.00, 261.63, 329.63, 392.00]; // Am9
+      if (bar === 2 || bar === 6) return [146.83, 174.61, 220.00, 261.63]; // Dm7
+      if (bar === 3 || bar === 7) return [196.00, 246.94, 293.66, 369.99]; // G7
+    }
     return [523.25, 659.25, 783.99]; // Default C chord
+  },
+
+  playDowntempoPad(freqs, time, dur) {
+    if (!this.ctx || this.muted) return;
+
+    const filter = this.ctx.createBiquadFilter();
+    filter.type = "lowpass";
+    filter.Q.setValueAtTime(0.8, time);
+    filter.frequency.setValueAtTime(900, time);
+    filter.frequency.linearRampToValueAtTime(1400, time + dur * 0.4);
+    filter.frequency.exponentialRampToValueAtTime(400, time + dur);
+
+    const gain = this.ctx.createGain();
+    gain.gain.setValueAtTime(0.001, time);
+    gain.gain.linearRampToValueAtTime(0.06, time + dur * 0.15);
+    gain.gain.setValueAtTime(0.05, time + dur * 0.5);
+    gain.gain.exponentialRampToValueAtTime(0.001, time + dur);
+
+    freqs.forEach((freq, idx) => {
+      const osc = this.ctx.createOscillator();
+      osc.type = "sawtooth";
+      osc.frequency.setValueAtTime(freq, time);
+      osc.detune.setValueAtTime((idx - 1.5) * 12 + Math.sin(idx * 2.1) * 5, time);
+
+      const osc2 = this.ctx.createOscillator();
+      osc2.type = "triangle";
+      osc2.frequency.setValueAtTime(freq * 1.002, time);
+      osc2.detune.setValueAtTime((idx - 1.5) * -8, time);
+      const osc2Gain = this.ctx.createGain();
+      osc2Gain.gain.value = 0.6;
+
+      osc.connect(filter);
+      osc2.connect(osc2Gain);
+      osc2Gain.connect(filter);
+
+      osc.start(time);
+      osc.stop(time + dur + 0.05);
+      osc2.start(time);
+      osc2.stop(time + dur + 0.05);
+    });
+
+    filter.connect(gain);
+
+    if (this.ctx.createStereoPanner) {
+      const panner = this.ctx.createStereoPanner();
+      const lfo = this.ctx.createOscillator();
+      const lfoGain = this.ctx.createGain();
+      lfo.frequency.value = 0.15;
+      lfoGain.gain.value = 0.3;
+      lfo.connect(lfoGain);
+      lfoGain.connect(panner.pan);
+      lfo.start(time);
+      lfo.stop(time + dur + 0.05);
+
+      gain.connect(panner);
+      panner.connect(this.musicGain);
+    } else {
+      gain.connect(this.musicGain);
+    }
   },
 
   playChiptuneArp(freqs, time, dur) {
@@ -2465,32 +2944,58 @@ const Sound = {
 
   playHouseChord(freqs, time, dur) {
     if (!this.ctx || this.muted) return;
+
     const filter = this.ctx.createBiquadFilter();
     filter.type = "lowpass";
-    filter.Q.setValueAtTime(1.8, time);
-    filter.frequency.setValueAtTime(1700, time);
-    filter.frequency.exponentialRampToValueAtTime(620, time + dur);
+    filter.Q.setValueAtTime(3.2, time);
+    filter.frequency.setValueAtTime(3200, time);
+    filter.frequency.exponentialRampToValueAtTime(450, time + dur * 0.85);
+
+    const dist = this.ctx.createWaveShaper();
+    const n = 256;
+    const curve = new Float32Array(n);
+    for (let i = 0; i < n; ++i) {
+      const x = (i * 2) / n - 1;
+      curve[i] = Math.tanh(x * 2.0);
+    }
+    dist.curve = curve;
+    dist.oversample = "2x";
 
     const gain = this.ctx.createGain();
     gain.gain.setValueAtTime(0.001, time);
-    gain.gain.linearRampToValueAtTime(0.055, time + 0.02);
+    gain.gain.linearRampToValueAtTime(0.12, time + 0.008);
+    gain.gain.setValueAtTime(0.10, time + 0.03);
     gain.gain.exponentialRampToValueAtTime(0.001, time + dur);
 
     const oscillators = freqs.map((freq, idx) => {
       const osc = this.ctx.createOscillator();
       osc.type = "sawtooth";
       osc.frequency.setValueAtTime(freq, time);
-      osc.detune.setValueAtTime((idx - 1.5) * 3, time);
-      osc.connect(filter);
+      osc.detune.setValueAtTime((idx - 1.5) * 8 + (Math.random() * 4 - 2), time);
+      osc.connect(dist);
       osc.start(time);
       osc.stop(time + dur + 0.03);
+
+      const osc2 = this.ctx.createOscillator();
+      osc2.type = "square";
+      osc2.frequency.setValueAtTime(freq, time);
+      osc2.detune.setValueAtTime((idx - 1.5) * -6, time);
+      const osc2Gain = this.ctx.createGain();
+      osc2Gain.gain.value = 0.3;
+      osc2.connect(osc2Gain);
+      osc2Gain.connect(dist);
+      osc2.start(time);
+      osc2.stop(time + dur + 0.03);
+
       return osc;
     });
 
+    dist.connect(filter);
     filter.connect(gain);
+
     if (this.ctx.createStereoPanner) {
       const panner = this.ctx.createStereoPanner();
-      panner.pan.setValueAtTime(0.18, time);
+      panner.pan.setValueAtTime(0.22, time);
       gain.connect(panner);
       panner.connect(this.musicGain);
     } else {
@@ -2502,41 +3007,80 @@ const Sound = {
   playMelodyNote(freq, time, dur) {
     if (!this.ctx) return;
     const track = this.trackIdx || 0;
+    const isModern = track === 3;
+    const isDowntempo = track === 4;
     const osc = this.ctx.createOscillator();
     const gain = this.ctx.createGain();
 
-    osc.type = track === 1 ? "sawtooth" : track === 3 ? "sine" : "triangle";
+    osc.type = isDowntempo ? "sawtooth" : track === 1 ? "sawtooth" : isModern ? "sawtooth" : "triangle";
     osc.frequency.setValueAtTime(freq, time);
+    if (isModern) osc.detune.setValueAtTime(6, time);
+    if (isDowntempo) osc.detune.setValueAtTime(4, time);
 
-    // A light vibrato keeps leads alive without turning every loop into a siren.
     const vibrato = this.ctx.createOscillator();
     const vibratoGain = this.ctx.createGain();
-    vibrato.frequency.value = track === 3 ? 4.2 : 5.4;
-    vibratoGain.gain.value = track === 1 ? 2.8 : track === 3 ? 1.4 : 2.2;
+    vibrato.frequency.value = isDowntempo ? 2.8 : isModern ? 3.5 : 5.4;
+    vibratoGain.gain.value = isDowntempo ? 6.0 : isModern ? 3.5 : track === 1 ? 2.8 : 2.2;
 
     vibrato.connect(vibratoGain);
     vibratoGain.connect(osc.frequency);
 
     const filter = this.ctx.createBiquadFilter();
     filter.type = "lowpass";
-    filter.frequency.setValueAtTime(track === 3 ? 1350 : 2100, time);
-    filter.frequency.exponentialRampToValueAtTime(track === 3 ? 760 : 900, time + dur);
+    if (isDowntempo) {
+      filter.frequency.setValueAtTime(1200, time);
+      filter.frequency.linearRampToValueAtTime(1800, time + dur * 0.3);
+      filter.frequency.exponentialRampToValueAtTime(400, time + dur);
+      filter.Q.setValueAtTime(4.0, time);
+    } else {
+      filter.frequency.setValueAtTime(isModern ? 2800 : 2100, time);
+      filter.frequency.exponentialRampToValueAtTime(isModern ? 600 : 900, time + dur);
+      if (isModern) filter.Q.setValueAtTime(2.5, time);
+    }
 
+    const peakVol = isDowntempo ? 0.09 : track === 2 ? 0.105 : isModern ? 0.10 : 0.085;
     gain.gain.setValueAtTime(0.001, time);
-    gain.gain.linearRampToValueAtTime(track === 2 ? 0.105 : track === 3 ? 0.07 : 0.085, time + 0.02);
+    gain.gain.linearRampToValueAtTime(peakVol, time + (isDowntempo ? 0.06 : isModern ? 0.008 : 0.02));
     gain.gain.exponentialRampToValueAtTime(0.001, time + dur);
 
     vibrato.start(time);
     osc.connect(filter);
+
+    if (isModern) {
+      const osc2 = this.ctx.createOscillator();
+      osc2.type = "square";
+      osc2.frequency.setValueAtTime(freq, time);
+      osc2.detune.setValueAtTime(-8, time);
+      const osc2Gain = this.ctx.createGain();
+      osc2Gain.gain.value = 0.25;
+      osc2.connect(osc2Gain);
+      osc2Gain.connect(filter);
+      osc2.start(time);
+      osc2.stop(time + dur + 0.02);
+    }
+
+    if (isDowntempo) {
+      const osc2 = this.ctx.createOscillator();
+      osc2.type = "triangle";
+      osc2.frequency.setValueAtTime(freq * 2.01, time);
+      const osc2Gain = this.ctx.createGain();
+      osc2Gain.gain.value = 0.15;
+      osc2.connect(osc2Gain);
+      osc2Gain.connect(filter);
+      osc2.start(time);
+      osc2.stop(time + dur + 0.02);
+    }
+
     filter.connect(gain);
 
-    // Lush Stereo Dotted-Eighth Delay Loop
     const stepDur = 60.0 / this.tempo / 4.0;
-    const delay = this.ctx.createDelay(1.0);
-    delay.delayTime.setValueAtTime(stepDur * 3, time);
+    const delay = this.ctx.createDelay(2.0);
+    delay.delayTime.setValueAtTime(isDowntempo ? stepDur * 6 : stepDur * 3, time);
 
+    const feedbackGain = isDowntempo ? 0.40 : isModern ? 0.30 : 0.22;
     const delayGain = this.ctx.createGain();
-    delayGain.gain.setValueAtTime(track === 3 ? 0.42 : 0.26, time);
+    delayGain.gain.setValueAtTime(feedbackGain, time);
+    delayGain.gain.exponentialRampToValueAtTime(0.0001, time + dur * (isDowntempo ? 4.0 : 2.5));
 
     delay.connect(delayGain);
     delayGain.connect(delay);
@@ -2546,92 +3090,182 @@ const Sound = {
 
     if (this.ctx.createStereoPanner) {
       const delayPanner = this.ctx.createStereoPanner();
-      delayPanner.pan.setValueAtTime(0.4, time);
+      delayPanner.pan.setValueAtTime(isDowntempo ? -0.5 : isModern ? -0.35 : 0.4, time);
       delayGain.connect(delayPanner);
       delayPanner.connect(this.musicGain);
     } else {
       delayGain.connect(this.musicGain);
     }
 
+    const stopTime = time + dur + 0.02;
     osc.start(time);
-    osc.stop(time + dur + 0.02);
-    vibrato.stop(time + dur + 0.02);
+    osc.stop(stopTime);
+    vibrato.stop(stopTime);
   },
 
-  playRetroKick(time) {
+  playRetroKick(time, heavy = false) {
     if (!this.ctx || this.muted) return;
+    const track = this.trackIdx || 0;
+    const isModern = track === 3 || heavy;
+
     const osc = this.ctx.createOscillator();
     const gain = this.ctx.createGain();
     osc.type = "sine";
-    // Sweep frequency rapidly from 150Hz down to 45Hz
-    osc.frequency.setValueAtTime(150, time);
-    osc.frequency.exponentialRampToValueAtTime(45, time + 0.08);
-    
+
+    if (isModern) {
+      osc.frequency.setValueAtTime(180, time);
+      osc.frequency.exponentialRampToValueAtTime(38, time + 0.12);
+    } else {
+      osc.frequency.setValueAtTime(150, time);
+      osc.frequency.exponentialRampToValueAtTime(45, time + 0.08);
+    }
+
+    const peakVol = isModern ? 0.52 : 0.35;
     gain.gain.setValueAtTime(0.001, time);
-    gain.gain.linearRampToValueAtTime(0.35, time + 0.005);
-    gain.gain.exponentialRampToValueAtTime(0.001, time + 0.08);
-    
+    gain.gain.linearRampToValueAtTime(peakVol, time + 0.003);
+    gain.gain.exponentialRampToValueAtTime(0.001, time + (isModern ? 0.18 : 0.08));
+
     osc.connect(gain);
-    gain.connect(this.musicGain);
-    
+
+    if (isModern) {
+      const clickOsc = this.ctx.createOscillator();
+      const clickGain = this.ctx.createGain();
+      clickOsc.type = "triangle";
+      clickOsc.frequency.setValueAtTime(4200, time);
+      clickOsc.frequency.exponentialRampToValueAtTime(200, time + 0.015);
+      clickGain.gain.setValueAtTime(0.001, time);
+      clickGain.gain.linearRampToValueAtTime(0.18, time + 0.001);
+      clickGain.gain.exponentialRampToValueAtTime(0.001, time + 0.025);
+      clickOsc.connect(clickGain);
+      clickGain.connect(this.musicGain);
+      clickOsc.start(time);
+      clickOsc.stop(time + 0.03);
+
+      const dist = this.ctx.createWaveShaper();
+      const n = 128;
+      const curve = new Float32Array(n);
+      for (let i = 0; i < n; ++i) {
+        const x = (i * 2) / n - 1;
+        curve[i] = Math.tanh(x * 3.5);
+      }
+      dist.curve = curve;
+      dist.oversample = "2x";
+      gain.connect(dist);
+      dist.connect(this.musicGain);
+    } else {
+      gain.connect(this.musicGain);
+    }
+
     osc.start(time);
-    osc.stop(time + 0.095);
+    osc.stop(time + (isModern ? 0.2 : 0.095));
   },
 
-  playRetroHiHat(time) {
+  playRetroHiHat(time, open = false) {
     if (!this.ctx || this.muted) return;
-    const dur = 0.035;
-    const bufferSize = this.ctx.sampleRate * dur;
+    const track = this.trackIdx || 0;
+    const dur = open ? 0.09 : (track === 3 ? 0.045 : 0.035);
+    const bufferSize = Math.max(1, Math.floor(this.ctx.sampleRate * dur));
     const buffer = this.ctx.createBuffer(1, bufferSize, this.ctx.sampleRate);
     const data = buffer.getChannelData(0);
     for (let i = 0; i < bufferSize; i++) {
-      data[i] = (Math.random() * 2 - 1);
+      const env = open ? Math.pow(1 - i / bufferSize, 1.5) : (1 - i / bufferSize);
+      data[i] = (Math.random() * 2 - 1) * env;
     }
-    
+
     const src = this.ctx.createBufferSource();
     src.buffer = buffer;
-    
+
     const filter = this.ctx.createBiquadFilter();
     filter.type = "highpass";
-    filter.frequency.setValueAtTime(7500, time);
-    
+    filter.frequency.setValueAtTime(track === 3 ? 8500 : 7500, time);
+    filter.Q.setValueAtTime(track === 3 ? 1.2 : 0.7, time);
+
     const gain = this.ctx.createGain();
-    gain.gain.setValueAtTime(0.04, time);
+    const vol = track === 3 ? 0.06 : 0.04;
+    gain.gain.setValueAtTime(vol, time);
     gain.gain.exponentialRampToValueAtTime(0.001, time + dur);
-    
+
     src.connect(filter);
     filter.connect(gain);
     gain.connect(this.musicGain);
-    
+
     src.start(time);
   },
 
   playRetroSnare(time, volScale = 1.0) {
     if (!this.ctx) return;
-    const dur = 0.08;
-    const bufferSize = this.ctx.sampleRate * dur;
+    const track = this.trackIdx || 0;
+    const isModern = track === 3;
+    const dur = isModern ? 0.14 : 0.08;
+    const bufferSize = Math.max(1, Math.floor(this.ctx.sampleRate * dur));
     const buffer = this.ctx.createBuffer(1, bufferSize, this.ctx.sampleRate);
     const data = buffer.getChannelData(0);
     for (let i = 0; i < bufferSize; i++) {
-      data[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / bufferSize, 2);
+      const env = isModern ? Math.pow(1 - i / bufferSize, 1.8) : Math.pow(1 - i / bufferSize, 2);
+      data[i] = (Math.random() * 2 - 1) * env;
     }
 
     const src = this.ctx.createBufferSource();
     src.buffer = buffer;
 
     const filter = this.ctx.createBiquadFilter();
-    filter.type = "bandpass";
-    filter.frequency.setValueAtTime(1000, time);
+    filter.type = isModern ? "peaking" : "bandpass";
+    filter.frequency.setValueAtTime(isModern ? 1800 : 1000, time);
+    if (isModern) filter.gain.setValueAtTime(6, time);
 
     const gain = this.ctx.createGain();
-    gain.gain.setValueAtTime(0.05 * volScale, time);
+    const baseVol = isModern ? 0.09 : 0.05;
+    gain.gain.setValueAtTime(baseVol * volScale, time);
     gain.gain.exponentialRampToValueAtTime(0.001, time + dur);
 
     src.connect(filter);
     filter.connect(gain);
-    gain.connect(this.musicGain);
 
+    if (isModern) {
+      const bodyOsc = this.ctx.createOscillator();
+      const bodyGain = this.ctx.createGain();
+      bodyOsc.type = "triangle";
+      bodyOsc.frequency.setValueAtTime(220, time);
+      bodyOsc.frequency.exponentialRampToValueAtTime(120, time + 0.04);
+      bodyGain.gain.setValueAtTime(0.001, time);
+      bodyGain.gain.linearRampToValueAtTime(0.12 * volScale, time + 0.002);
+      bodyGain.gain.exponentialRampToValueAtTime(0.001, time + 0.06);
+      bodyOsc.connect(bodyGain);
+      bodyGain.connect(this.musicGain);
+      bodyOsc.start(time);
+      bodyOsc.stop(time + 0.07);
+    }
+
+    gain.connect(this.musicGain);
     src.start(time);
+  },
+
+  playClap(time, volScale = 1.0) {
+    if (!this.ctx || this.muted) return;
+    const layers = 3;
+    for (let l = 0; l < layers; l++) {
+      const offset = l * 0.012;
+      const dur = 0.065;
+      const bufferSize = Math.max(1, Math.floor(this.ctx.sampleRate * dur));
+      const buffer = this.ctx.createBuffer(1, bufferSize, this.ctx.sampleRate);
+      const data = buffer.getChannelData(0);
+      for (let i = 0; i < bufferSize; i++) {
+        data[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / bufferSize, 2.5);
+      }
+      const src = this.ctx.createBufferSource();
+      src.buffer = buffer;
+      const filter = this.ctx.createBiquadFilter();
+      filter.type = "bandpass";
+      filter.frequency.setValueAtTime(1400 + l * 400, time + offset);
+      filter.Q.setValueAtTime(2.0, time + offset);
+      const gain = this.ctx.createGain();
+      gain.gain.setValueAtTime(0.06 * volScale, time + offset);
+      gain.gain.exponentialRampToValueAtTime(0.001, time + offset + dur);
+      src.connect(filter);
+      filter.connect(gain);
+      gain.connect(this.musicGain);
+      src.start(time + offset);
+    }
   }
 };
 
@@ -2666,12 +3300,8 @@ window.addEventListener("keydown", (e) => {
   }
   if (key === "n" || key === "N" || code === "KeyN") {
     if (Sound.isPlayingMusic) {
-      Sound.trackIdx = (Sound.trackIdx + 1) % Sound.tracks.length;
-      const t = Sound.tracks[Sound.trackIdx];
-      Sound.tempo = t.tempo;
-      if (game.player && game.player.lap >= TOTAL_LAPS - 1) {
-        Sound.tempo = t.tempo + 18;
-      }
+      const nextIdx = ((Sound.trackIdx || 0) + 1) % Sound.tracks.length;
+      Sound.switchTrack(nextIdx);
       Sound.showTrackToast();
     }
   }
@@ -2972,6 +3602,52 @@ const MAPS = [
       { seg: 18, t: 0.44, amp: 80, speed: 1.55, phase: 2.2, color: "#bd57ff" }
     ],
     desc: "A brutal vault breach with hairpins, split-flow switchbacks, narrow ice corridors, and moving firewall gates."
+  },
+  {
+    name: "Regulatory Dragon Run",
+    id: "regulatory_dragon_run",
+    worldW: 6600,
+    worldH: 1900,
+    waypoints: [
+      { x:  520, y: 1320 },
+      { x: 1300, y: 1320 },
+      { x: 2180, y: 1280 },
+      { x: 3180, y: 1320 },
+      { x: 4200, y: 1280 },
+      { x: 5200, y: 1320 },
+      { x: 6020, y: 1180 },
+      { x: 6260, y:  880 },
+      { x: 5900, y:  540 },
+      { x: 4920, y:  480 },
+      { x: 3700, y:  520 },
+      { x: 2460, y:  500 },
+      { x: 1320, y:  560 },
+      { x:  620, y:  820 },
+    ],
+    roadHalfBase: 118,
+    segWidth: {
+      0: 1.18,
+      1: 1.12,
+      2: 1.05,
+      3: 1.12,
+      4: 1.15,
+      5: 1.05,
+      8: 0.78,
+      9: 0.74,
+      10: 0.76,
+      11: 0.82
+    },
+    boostPadSegs: [0, 2, 4, 6, 10, 12],
+    itemBoxSegs: [1, 3, 5, 8, 11, 13],
+    regulatoryDragon: {
+      startX: 160,
+      startY: 1380,
+      baseGap: 760,
+      minGap: 260,
+      closeSeconds: 95,
+      fireEvery: 82
+    },
+    desc: "A long panic boulevard where a regulatory dragon chases the grid and spits audit fireballs down the lane."
   }
 ];
 
@@ -3011,6 +3687,7 @@ class Track {
     this.boostPads = this._placeBoostPads(mapConfig.boostPadSegs || []);
     this.itemBoxes = this._placeItemBoxes(mapConfig.itemBoxSegs || []);
     this.movingObjects = this._placeMovingObjects(mapConfig.movingObjects || []);
+    this.regulatoryDragon = this._createRegulatoryDragon(mapConfig.regulatoryDragon);
   }
 
   // Find closest segment to a world point
@@ -3168,6 +3845,222 @@ class Track {
       obj.phase += obj.speed * 0.035 * dt;
       this._updateMovingObjectPosition(obj);
     }
+  }
+
+  _createRegulatoryDragon(config) {
+    if (!config) return null;
+    return {
+      x: config.startX || 120,
+      y: config.startY || WORLD_H * 0.72,
+      vx: 0,
+      vy: 0,
+      heading: 0,
+      r: 88,
+      baseGap: config.baseGap || 720,
+      minGap: config.minGap || 260,
+      closeSeconds: config.closeSeconds || 90,
+      fireEvery: config.fireEvery || 90,
+      fireTimer: 90,
+      jawPhase: 0,
+      wingPhase: 0,
+      enraged: false,
+      active: true
+    };
+  }
+
+  isDragonFinalLapEnraged() {
+    return getActiveKarts().some(k => k && k.isPlayer && !k.eliminated && k.lap >= TOTAL_LAPS - 1);
+  }
+
+  updateRegulatoryDragon(dt) {
+    const dragon = this.regulatoryDragon;
+    if (!dragon || !game.player || game.state !== STATE.RACING) return;
+
+    const target = getDragonTarget();
+    if (!target) return;
+    const enraged = this.isDragonFinalLapEnraged();
+    dragon.enraged = enraged;
+    const fx = Math.cos(target.heading);
+    const fy = Math.sin(target.heading);
+    const lx = -fy;
+    const ly = fx;
+    const pressure = clamp(game.raceTime / dragon.closeSeconds, 0, 1);
+    const gap = Math.max(210, lerp(dragon.baseGap, dragon.minGap, pressure) - (enraged ? 85 : 0));
+    const weave = enraged ? 82 : 55;
+    const desiredX = target.x - fx * gap + lx * Math.sin(game.raceTime * (enraged ? 2.0 : 1.4)) * weave;
+    const desiredY = target.y - fy * gap + ly * Math.sin(game.raceTime * (enraged ? 1.7 : 1.1)) * weave;
+    const chaseBase = Math.max(0.925, 0.965 - pressure * 0.018 - (enraged ? 0.014 : 0));
+    const chaseLerp = 1 - Math.pow(chaseBase, dt);
+
+    dragon.vx = (desiredX - dragon.x) * chaseLerp;
+    dragon.vy = (desiredY - dragon.y) * chaseLerp;
+    dragon.x += dragon.vx;
+    dragon.y += dragon.vy;
+    dragon.heading = Math.atan2(target.y - dragon.y, target.x - dragon.x);
+    dragon.jawPhase += (enraged ? 0.28 : 0.18) * dt;
+    dragon.wingPhase += (enraged ? 0.14 : 0.08) * dt;
+    dragon.fireTimer -= dt;
+
+    if (dragon.fireTimer <= 0) {
+      dragon.fireTimer = Math.max(enraged ? 34 : 42, dragon.fireEvery - pressure * 28 - (enraged ? 22 : 0) + rand(-10, enraged ? 5 : 10));
+      this.fireRegulatoryDragonShot(target, enraged);
+    }
+  }
+
+  fireRegulatoryDragonShot(target, enraged = false) {
+    const dragon = this.regulatoryDragon;
+    if (!dragon || !target) return;
+    const muzzleX = dragon.x + Math.cos(dragon.heading) * 72;
+    const muzzleY = dragon.y + Math.sin(dragon.heading) * 72;
+    const leadX = target.x + target.vx * 18;
+    const leadY = target.y + target.vy * 18;
+    const baseAng = Math.atan2(leadY - muzzleY, leadX - muzzleX);
+    const spread = enraged ? 0.16 : 0.08;
+    game.hazards.push(new RegulatoryProjectile(muzzleX, muzzleY, baseAng + rand(-spread, spread), enraged ? 9.4 : 8.4, enraged));
+    if (enraged && Math.random() < 0.45) {
+      const side = Math.random() < 0.5 ? -1 : 1;
+      game.hazards.push(new RegulatoryProjectile(muzzleX, muzzleY, baseAng + side * rand(0.18, 0.28), 8.6, true));
+    }
+    Sound.spatialTone(muzzleX, muzzleY, enraged ? 82 : 120, 0.22, "sawtooth", enraged ? 0.17 : 0.13, 36);
+    Sound.spatialNoise(muzzleX, muzzleY, 0.18, enraged ? 0.14 : 0.10, 260);
+    if (game.particles) {
+      game.particles.burst(muzzleX, muzzleY, enraged ? "#ff7a18" : "#ff3366", enraged ? 24 : 16, { type: "spark", spdMin: 2, spdMax: enraged ? 7 : 5.5 });
+    }
+  }
+
+  drawRegulatoryDragon(ctx, time) {
+    const dragon = this.regulatoryDragon;
+    if (!dragon || !dragon.active) return;
+    const enraged = !!dragon.enraged;
+    const wing = Math.sin(dragon.wingPhase) * (enraged ? 0.62 : 0.45);
+    const jaw = (enraged ? 1.0 : 0.86) + (enraged ? 0.46 : 0.34) * Math.sin(dragon.jawPhase);
+    const scale = enraged ? 1.12 : 1.0;
+    const glowColor = enraged ? "#ff7a18" : "#ff3366";
+
+    ctx.save();
+    ctx.translate(dragon.x, dragon.y);
+    ctx.rotate(dragon.heading);
+    ctx.scale(scale, scale);
+    ctx.shadowBlur = enraged ? 42 : 26;
+    ctx.shadowColor = glowColor;
+
+    if (enraged) {
+      ctx.strokeStyle = "rgba(255, 122, 24, 0.45)";
+      ctx.lineWidth = 3;
+      ctx.setLineDash([18, 12]);
+      ctx.lineDashOffset = -time * 0.08;
+      ctx.beginPath();
+      ctx.arc(-18, 0, 150 + Math.sin(time * 0.01) * 12, 0, TAU);
+      ctx.stroke();
+      ctx.setLineDash([]);
+    }
+
+    // Wings / regulatory stamp fins
+    ctx.fillStyle = enraged ? "rgba(255, 122, 24, 0.34)" : "rgba(255, 51, 102, 0.28)";
+    ctx.strokeStyle = glowColor;
+    ctx.lineWidth = 4;
+    for (const side of [-1, 1]) {
+      ctx.save();
+      ctx.scale(1, side);
+      ctx.rotate(wing * side);
+      ctx.beginPath();
+      ctx.moveTo(-22, 16);
+      ctx.lineTo(-168, 96);
+      ctx.lineTo(-92, 18);
+      ctx.lineTo(-172, -74);
+      ctx.lineTo(-22, -24);
+      ctx.closePath();
+      ctx.fill();
+      ctx.stroke();
+      ctx.restore();
+    }
+
+    // Body
+    const bodyGrad = ctx.createLinearGradient(-80, 0, 80, 0);
+    bodyGrad.addColorStop(0, enraged ? "rgba(62, 4, 0, 0.98)" : "rgba(24, 0, 20, 0.98)");
+    bodyGrad.addColorStop(0.45, enraged ? "rgba(255, 82, 18, 0.95)" : "rgba(180, 0, 72, 0.92)");
+    bodyGrad.addColorStop(1, "rgba(10, 4, 28, 0.98)");
+    ctx.fillStyle = bodyGrad;
+    ctx.strokeStyle = "#ffffff";
+    ctx.lineWidth = 3.5;
+    ctx.beginPath();
+    ctx.ellipse(-18, 0, 118, 58, 0, 0, TAU);
+    ctx.fill();
+    ctx.stroke();
+
+    // Back spines
+    ctx.fillStyle = "#ffffff";
+    ctx.strokeStyle = "#ff3366";
+    for (let i = 0; i < 7; i++) {
+      const sx = -92 + i * 28;
+      ctx.beginPath();
+      ctx.moveTo(sx, -50);
+      ctx.lineTo(sx + 12, -86 - (i % 2) * 14);
+      ctx.lineTo(sx + 26, -48);
+      ctx.closePath();
+      ctx.fill();
+      ctx.stroke();
+    }
+
+    // Head and jaws
+    ctx.fillStyle = glowColor;
+    ctx.strokeStyle = "#ffffff";
+    ctx.beginPath();
+    ctx.moveTo(64, -48);
+    ctx.lineTo(168, -28 * jaw);
+    ctx.lineTo(104, 0);
+    ctx.lineTo(168, 28 * jaw);
+    ctx.lineTo(64, 48);
+    ctx.closePath();
+    ctx.fill();
+    ctx.stroke();
+
+    // Teeth
+    ctx.fillStyle = "#ffffff";
+    for (let i = 0; i < 5; i++) {
+      const tx = 105 + i * 11;
+      ctx.beginPath();
+      ctx.moveTo(tx, -18);
+      ctx.lineTo(tx + 5, -2);
+      ctx.lineTo(tx + 10, -18);
+      ctx.fill();
+      ctx.beginPath();
+      ctx.moveTo(tx, 18);
+      ctx.lineTo(tx + 5, 2);
+      ctx.lineTo(tx + 10, 18);
+      ctx.fill();
+    }
+
+    // Eye and compliance stamp
+    ctx.shadowBlur = 0;
+    ctx.fillStyle = "#fffb8f";
+    ctx.beginPath();
+    ctx.arc(84, -19, 7, 0, TAU);
+    ctx.fill();
+    ctx.beginPath();
+    ctx.arc(84, 19, 7, 0, TAU);
+    ctx.fill();
+    ctx.fillStyle = "#0d0b21";
+    ctx.font = "bold 12px monospace";
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.fillText("REG", -18, 0);
+    if (enraged) {
+      ctx.fillStyle = "#fff4b0";
+      ctx.font = "bold 9px monospace";
+      ctx.fillText("FINAL NOTICE", -18, 18);
+    }
+
+    // Heat shimmer rings behind dragon
+    ctx.strokeStyle = enraged
+      ? `rgba(255, 122, 24, ${0.5 + 0.25 * Math.sin(time * 0.012)})`
+      : `rgba(255, 51, 102, ${0.35 + 0.2 * Math.sin(time * 0.008)})`;
+    ctx.setLineDash([8, 8]);
+    ctx.beginPath();
+    ctx.arc(-92, 0, 42, 0, TAU);
+    ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.restore();
   }
 
   // ---- Drawing ----
@@ -3660,6 +4553,63 @@ class MergeConflict {
 }
 
 /* ============================================================
+   REGULATORY DRAGON PROJECTILE HAZARD
+   ============================================================ */
+class RegulatoryProjectile {
+  constructor(x, y, heading, speed = 8.4, enraged = false) {
+    this.x = x;
+    this.y = y;
+    this.heading = heading;
+    this.speed = speed;
+    this.vx = Math.cos(heading) * this.speed;
+    this.vy = Math.sin(heading) * this.speed;
+    this.r = enraged ? 20 : 17;
+    this.spin = Math.random() * TAU;
+    this.life = 300;
+    this.active = true;
+    this.kind = "regulatory_projectile";
+    this.enraged = enraged;
+  }
+
+  update(dt) {
+    this.x += this.vx * dt;
+    this.y += this.vy * dt;
+    this.spin += 0.24 * dt;
+    this.life -= dt;
+    if (this.life <= 0) this.active = false;
+  }
+
+  draw(ctx, time) {
+    const pulse = 0.7 + 0.3 * Math.sin(time * 0.018 + this.spin);
+    const color = this.enraged ? "#ff7a18" : "#ff3366";
+    ctx.save();
+    ctx.translate(this.x, this.y);
+    ctx.rotate(this.spin);
+    ctx.shadowBlur = (this.enraged ? 26 : 18) * pulse;
+    ctx.shadowColor = color;
+    ctx.fillStyle = this.enraged ? "rgba(255, 122, 24, 0.38)" : "rgba(255, 51, 102, 0.32)";
+    ctx.strokeStyle = color;
+    ctx.lineWidth = 2.5;
+    ctx.beginPath();
+    ctx.moveTo(0, -18);
+    ctx.lineTo(16, 0);
+    ctx.lineTo(0, 18);
+    ctx.lineTo(-16, 0);
+    ctx.closePath();
+    ctx.fill();
+    ctx.stroke();
+
+    ctx.shadowBlur = 0;
+    ctx.fillStyle = "#ffffff";
+    ctx.font = "bold 9px monospace";
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.fillText("§", 0, 0);
+    ctx.restore();
+  }
+}
+
+/* ============================================================
    DOSSIER PROJECTILE HAZARD
    ============================================================ */
 class DossierProjectile {
@@ -3791,6 +4741,7 @@ class Kart {
     this.spinoutTimer = 0;
     this.spinAngle = 0;
     this.gripRecovery = 1.0;
+    this.eliminated = false;
 
     // Race progress
     this.nextCheckpoint = 1;
@@ -4395,6 +5346,7 @@ class PlayerKart extends Kart {
   }
 
   update(dt, track) {
+    if (this.eliminated) return;
     const keys = this.playerIndex === 2 ? keysP2 : keysP1;
     const input = {
       forward: !!keys.up,
@@ -4514,6 +5466,7 @@ class AIKart extends Kart {
   }
 
   update(dt, track, allKarts) {
+    if (this.eliminated) return;
     // Safeguard: Ensure aiTargetIdx is never behind nextCheckpoint
     const diffCheck = (this.nextCheckpoint - this.aiTargetIdx + track.n) % track.n;
     if (diffCheck !== 0 && diffCheck !== track.n - 1) {
@@ -4556,6 +5509,8 @@ class AIKart extends Kart {
     
     const obstacles = [
       ...(game.hazards || []).map(h => ({ x: h.x, y: h.y, r: h.r || 15, isHazard: true })),
+      ...(game.track.movingObjects || []).map(o => ({ x: o.x, y: o.y, r: o.r || 24, isHazard: true })),
+      ...(game.track.regulatoryDragon ? [{ x: game.track.regulatoryDragon.x, y: game.track.regulatoryDragon.y, r: game.track.regulatoryDragon.r || 70, isHazard: true }] : []),
       ...getActiveKarts().filter(k => k !== this).map(k => ({ x: k.x, y: k.y, r: 18, isHazard: false }))
     ];
     
@@ -5207,6 +6162,7 @@ function buildRace() {
   game.flash = 0;
   game.coinsCollected = 0;
   game.finishOrder = [];
+  game.finishScheduled = false;
   game.hazards = []; // Initialize active physical hazard block elements!
 
   // Line up karts on starting grid (across from start line)
@@ -5339,6 +6295,7 @@ function startRace() {
 }
 
 function finishRace() {
+  if (game.state === STATE.FINISHED) return;
   game.state = STATE.FINISHED;
   game.raceFinishedAt = performance.now();
   
@@ -5350,9 +6307,11 @@ function finishRace() {
   // Build finish order from progress
   const all = getActiveKarts();
   const finished = game.finishOrder.slice(); // already in finish order
-  const unfinished = all.filter(k => !k.finished);
+  const eliminated = all.filter(k => k.eliminated && !finished.includes(k));
+  const unfinished = all.filter(k => !k.finished && !k.eliminated);
   unfinished.sort((a, b) => progressValue(b) - progressValue(a));
   for (const k of unfinished) finished.push(k);
+  for (const k of eliminated) finished.push(k);
   game.finalRanking = finished;
   showFinishScreen();
   Sound.finish();
@@ -5439,16 +6398,7 @@ function checkProgress(kart) {
             game.slowMoEnd = performance.now() + 1500;
 
             // Symmetrical check: only trigger finish race when all active humans have finished!
-            let allHumanFinished = true;
-            if (game.player && !game.player.finished) allHumanFinished = false;
-            if (game.multiplayer && game.player2 && !game.player2.finished) allHumanFinished = false;
-            if (game.remotePlayers) {
-              for (const remote of game.remotePlayers) {
-                if (!remote.finished) allHumanFinished = false;
-              }
-            }
-            
-            if (allHumanFinished) {
+            if (areAllHumansDone()) {
               setTimeout(() => finishRace(), 1500);
             }
           }
@@ -5829,6 +6779,24 @@ function update(dt, time) {
       }
     }
 
+    if (game.track.regulatoryDragon) {
+      if (!game.p2pMode || game.p2pRole === "host") {
+        game.track.updateRegulatoryDragon(dt);
+      }
+      const dragon = game.track.regulatoryDragon;
+      if (!game.p2pMode || game.p2pRole === "host") {
+        for (const kart of activeKarts) {
+          if (!kart || kart.finished || kart.eliminated) continue;
+          const d = dist(kart.x, kart.y, dragon.x, dragon.y);
+          if (d < dragon.r + 24) {
+            if (!absorbFatalHitWithShield(kart, kart.x, kart.y)) {
+              eliminateKart(kart, "DEVOURED!", kart.x, kart.y, "#ff3366");
+            }
+          }
+        }
+      }
+    }
+
     // Update physical hazards and check collisions
     if (game.hazards) {
       for (let i = game.hazards.length - 1; i >= 0; i--) {
@@ -5839,22 +6807,34 @@ function update(dt, time) {
         } else {
           h.update(dt);
         }
+
+        if (h.active === false) {
+          game.hazards.splice(i, 1);
+          continue;
+        }
         
         for (const kart of activeKarts) {
           if (h instanceof DossierProjectile && h.owner === kart && h.ignoreOwnerTimer > 0) {
             continue;
           }
           
-          if (kart.spinoutTimer <= 0 && dist(kart.x, kart.y, h.x, h.y) < 24) {
+          if (!kart.eliminated && kart.spinoutTimer <= 0 && dist(kart.x, kart.y, h.x, h.y) < 24) {
             game.hazards.splice(i, 1);
-            if (kart.shieldTimer > 0) {
+            const isDossier = (h instanceof DossierProjectile);
+            const isRegulatory = (h instanceof RegulatoryProjectile);
+            if (isRegulatory) {
+              if (absorbFatalHitWithShield(kart, h.x, h.y)) {
+                // Shield consumed the fatal audit projectile.
+              } else {
+                eliminateKart(kart, "REGULATED!", h.x, h.y, "#ff3366");
+              }
+            } else if (kart.shieldTimer > 0) {
               kart.shieldTimer = 0; // Consume shield
               if (kart.isPlayer) {
                 Sound.tone(600, 0.1, "square", 0.1, 300);
               }
               game.particles.burst(h.x, h.y, "#78dcff", 15, { type: "spark", spdMin: 1.5, spdMax: 4 });
             } else {
-              const isDossier = (h instanceof DossierProjectile);
               if (isDossier && kart.charId === "florian") {
                 kart.spinoutTimer = 22; // cuts spinout in half
                 kart.spinAngle = 0;
@@ -5877,10 +6857,12 @@ function update(dt, time) {
                   Sound.crash();
                   game.shake = Math.max(game.shake, 8);
                 }
-                game.particles.burst(h.x, h.y, isDossier ? "#57f2ff" : "#ff4d6d", 20, { type: "spark", spdMin: 2, spdMax: 5.5 });
+                const hazardColor = isDossier ? "#57f2ff" : (isRegulatory ? "#ff3366" : "#ff4d6d");
+                const hazardText = isDossier ? "AUDITED!" : (isRegulatory ? "REGULATED!" : "CONFLICT!");
+                game.particles.burst(h.x, h.y, hazardColor, 20, { type: "spark", spdMin: 2, spdMax: 5.5 });
                 game.particles.add({
-                  type: "text", text: isDossier ? "AUDITED!" : "CONFLICT!", x: h.x, y: h.y - 20,
-                  vx: rand(-0.5, 0.5), vy: -1.2, life: 75, maxLife: 75, size: 20, color: isDossier ? "#57f2ff" : "#ff4d6d", drag: 0.98
+                  type: "text", text: hazardText, x: h.x, y: h.y - 20,
+                  vx: rand(-0.5, 0.5), vy: -1.2, life: 75, maxLife: 75, size: 20, color: hazardColor, drag: 0.98
                 });
                 triggerQuote(kart, "crash");
               }
@@ -6114,6 +7096,10 @@ function drawWorld(pKart, left, top, width, height, time, isP2) {
   // Moving mainframe objects
   if (game.track.movingObjects && game.track.movingObjects.length) {
     game.track.drawMovingObjects(ctx, time);
+  }
+
+  if (game.track.regulatoryDragon) {
+    game.track.drawRegulatoryDragon(ctx, time);
   }
 
   // Hazards
@@ -6879,12 +7865,19 @@ function drawCountdown() {
    FORMATTERS
    ============================================================ */
 function formatTime(t) {
+  if (!Number.isFinite(t)) return "DNF";
   const m = Math.floor(t / 60);
   const s = Math.floor(t % 60);
   const ms = Math.floor((t - Math.floor(t)) * 100);
   return `${pad2(m)}:${pad2(s)}.${pad2(ms)}`;
 }
 function pad2(n) { return n < 10 ? "0" + n : "" + n; }
+function resultTime(k, fallback = "DNF") {
+  if (!k) return fallback;
+  if (k.eliminated) return "ELIMINATED";
+  if (k.finished) return formatTime(k.finishTime);
+  return fallback;
+}
 function ordinal(n) {
   const s = ["th", "st", "nd", "rd"], v = n % 100;
   return n + (s[(v - 20) % 10] || s[v] || s[0]);
@@ -6936,7 +7929,7 @@ function showFinishScreen() {
     html += `<div style="flex: 1; text-align: left; padding: 12px; background: rgba(123, 117, 255, 0.08); border-radius: 12px; border: 1px solid rgba(123, 117, 255, 0.2);">`;
     html += `<div style="font-weight: 900; color: #7b75ff; border-bottom: 1px solid rgba(123,117,255,0.2); padding-bottom: 4px; margin-bottom: 8px;">PLAYER 1 (${game.player.name})</div>`;
     html += `<div class="row" style="margin: 4px 0;"><span class="label">Place</span><span class="value"><span class="place-badge place-${Math.min(p1Place, 4)}">${ordinal(p1Place)}</span></span></div>`;
-    html += `<div class="row" style="margin: 4px 0;"><span class="label">Time</span><span class="value">${game.player.finished ? formatTime(game.player.finishTime) : "DNF"}</span></div>`;
+    html += `<div class="row" style="margin: 4px 0;"><span class="label">Time</span><span class="value">${resultTime(game.player)}</span></div>`;
     html += `<div class="row" style="margin: 4px 0;"><span class="label">Coins</span><span class="value">${game.player.coinsCollected}</span></div>`;
     const p1Score = game.player.coinsCollected * 10 + Math.max(0, (5 - p1Place) * 250);
     html += `<div class="row" style="margin: 4px 0;"><span class="label">Score</span><span class="value">${p1Score}</span></div>`;
@@ -6946,7 +7939,7 @@ function showFinishScreen() {
     html += `<div style="flex: 1; text-align: left; padding: 12px; background: rgba(255, 77, 109, 0.08); border-radius: 12px; border: 1px solid rgba(255, 77, 109, 0.2);">`;
     html += `<div style="font-weight: 900; color: #ff4d6d; border-bottom: 1px solid rgba(255,77,109,0.2); padding-bottom: 4px; margin-bottom: 8px;">PLAYER 2 (${game.player2.name})</div>`;
     html += `<div class="row" style="margin: 4px 0;"><span class="label">Place</span><span class="value"><span class="place-badge place-${Math.min(p2Place, 4)}">${ordinal(p2Place)}</span></span></div>`;
-    html += `<div class="row" style="margin: 4px 0;"><span class="label">Time</span><span class="value">${game.player2.finished ? formatTime(game.player2.finishTime) : "DNF"}</span></div>`;
+    html += `<div class="row" style="margin: 4px 0;"><span class="label">Time</span><span class="value">${resultTime(game.player2)}</span></div>`;
     html += `<div class="row" style="margin: 4px 0;"><span class="label">Coins</span><span class="value">${game.player2.coinsCollected}</span></div>`;
     const p2Score = game.player2.coinsCollected * 10 + Math.max(0, (5 - p2Place) * 250);
     html += `<div class="row" style="margin: 4px 0;"><span class="label">Score</span><span class="value">${p2Score}</span></div>`;
@@ -6957,7 +7950,7 @@ function showFinishScreen() {
     // Full ranking
     html += `<div class="row" style="margin-top:6px; font-weight: 900; color: #fff;"><span class="label">Final Grid Leaderboard</span><span></span></div>`;
     ranking.forEach((k, i) => {
-      const time = k.finished ? formatTime(k.finishTime) : "DNF";
+      const time = resultTime(k);
       html += `<div class="row"><span class="label" style="color:${k.color};font-weight:700;">${i + 1}. ${k.name}</span><span class="value">${time}</span></div>`;
     });
 
@@ -6969,7 +7962,7 @@ function showFinishScreen() {
     finishTitle.style.background = "";
     let html = "";
     html += `<div class="row"><span class="label">Your Place</span><span class="value"><span class="place-badge place-${Math.min(playerPlace, 4)}">${ordinal(playerPlace)}</span></span></div>`;
-    html += `<div class="row"><span class="label">Final Time</span><span class="value">${game.player.finished ? formatTime(game.player.finishTime) : formatTime(game.raceTime)}</span></div>`;
+    html += `<div class="row"><span class="label">Final Time</span><span class="value">${resultTime(game.player, formatTime(game.raceTime))}</span></div>`;
     html += `<div class="row"><span class="label">Coins Collected</span><span class="value">${game.player.coinsCollected}</span></div>`;
     const score = game.player.coinsCollected * 10 + Math.max(0, (5 - playerPlace) * 250) + Math.max(0, Math.floor(60 - game.raceTime) * 5);
     html += `<div class="row"><span class="label">Score</span><span class="value">${score}</span></div>`;
@@ -6978,7 +7971,7 @@ function showFinishScreen() {
     // Full ranking
     html += `<div class="row" style="border-top:1px solid rgba(255,255,255,0.1);margin-top:6px;padding-top:10px;"><span class="label">Final Ranking</span><span></span></div>`;
     ranking.forEach((k, i) => {
-      const time = k.finished ? formatTime(k.finishTime) : "—";
+      const time = resultTime(k, "—");
       html += `<div class="row"><span class="label" style="color:${k.color};font-weight:700;">${i + 1}. ${k.name}</span><span class="value">${time}</span></div>`;
     });
 
@@ -7018,11 +8011,15 @@ function renderMusicSettings() {
 
 function setMusicTrack(idx) {
   const safeIdx = Math.floor(clamp(idx, 0, Sound.tracks.length - 1));
-  Sound.trackIdx = safeIdx;
-  const track = Sound.tracks[safeIdx];
-  Sound.tempo = track.tempo;
-  if (game.player && game.player.lap >= TOTAL_LAPS - 1) {
-    Sound.tempo = track.tempo + 18;
+  if (Sound.isPlayingMusic) {
+    Sound.switchTrack(safeIdx);
+  } else {
+    Sound.trackIdx = safeIdx;
+    const track = Sound.tracks[safeIdx];
+    Sound.tempo = track.tempo;
+    if (game.player && game.player.lap >= TOTAL_LAPS - 1) {
+      Sound.tempo = track.tempo + 18;
+    }
   }
   renderMusicSettings();
   if (Sound.isPlayingMusic) {
@@ -7366,12 +8363,44 @@ function applyKartState(kart, p) {
   kart.mergePullTarget = getKartById(kart.mergePullTargetId);
 }
 
+function serializeDragonState(dragon) {
+  if (!dragon) return null;
+  return {
+    x: dragon.x,
+    y: dragon.y,
+    vx: dragon.vx,
+    vy: dragon.vy,
+    heading: dragon.heading,
+    fireTimer: dragon.fireTimer,
+    jawPhase: dragon.jawPhase,
+    wingPhase: dragon.wingPhase,
+    enraged: dragon.enraged,
+    active: dragon.active
+  };
+}
+
+function applyDragonState(state) {
+  const dragon = game.track && game.track.regulatoryDragon;
+  if (!dragon || !state) return;
+  dragon.x = state.x;
+  dragon.y = state.y;
+  dragon.vx = state.vx || 0;
+  dragon.vy = state.vy || 0;
+  dragon.heading = state.heading || 0;
+  dragon.fireTimer = state.fireTimer !== undefined ? state.fireTimer : dragon.fireTimer;
+  dragon.jawPhase = state.jawPhase || 0;
+  dragon.wingPhase = state.wingPhase || 0;
+  dragon.enraged = !!state.enraged;
+  dragon.active = state.active !== false;
+}
+
 function sendHostSync() {
   if (!game.player) return;
   const sync = {
     type: "host_sync",
     raceTime: game.raceTime,
     state: game.state,
+    dragon: serializeDragonState(game.track && game.track.regulatoryDragon),
     players: (game.p2pPlayers || []).map(p => ({
       id: p.id,
       state: serializeKartState(getKartById(p.id))
@@ -7415,11 +8444,14 @@ function sendHostSync() {
     itemBoxes: game.track.itemBoxes.map(b => b.active),
     hazards: (game.hazards || []).map(h => ({
       isDossier: h instanceof DossierProjectile,
+      isRegulatory: h instanceof RegulatoryProjectile,
+      enraged: h.enraged || false,
       x: h.x,
       y: h.y,
       heading: h.heading || 0,
       vx: h.vx || 0,
       vy: h.vy || 0,
+      speed: h.speed || 0,
       spin: h.spin || 0,
       active: h.active,
       ownerId: getKartId(h.owner),
@@ -7581,10 +8613,17 @@ function handleP2pData(data, sourceConn = null) {
       }
     }
     if (data.raceTime !== undefined) game.raceTime = data.raceTime;
+    if (data.dragon) applyDragonState(data.dragon);
 
     if (data.players) {
       for (const playerState of data.players) {
-        if (!playerState || playerState.id === game.p2pLocalId) continue;
+        if (!playerState) continue;
+        if (playerState.id === game.p2pLocalId) {
+          if (playerState.state && playerState.state.eliminated) {
+            applyKartState(game.player, playerState.state);
+          }
+          continue;
+        }
         applyKartState(getKartById(playerState.id), playerState.state);
       }
     }
@@ -7658,6 +8697,13 @@ function handleP2pData(data, sourceConn = null) {
           dp.active = h.active;
           dp.ignoreOwnerTimer = h.ignoreOwnerTimer !== undefined ? h.ignoreOwnerTimer : 0;
           return dp;
+        } else if (h.isRegulatory) {
+          const rp = new RegulatoryProjectile(h.x, h.y, h.heading, h.speed || 8.4, h.enraged || false);
+          rp.vx = h.vx;
+          rp.vy = h.vy;
+          rp.spin = h.spin;
+          rp.active = h.active;
+          return rp;
         } else {
           const mc = new MergeConflict(h.x, h.y);
           mc.spin = h.spin;

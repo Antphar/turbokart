@@ -55,6 +55,7 @@ Every single sound effect and music track is synthesized on-the-fly using the br
 * Glowing cyan boundaries with scrolling flow arrows on deep indigo highways.
 * Glowing "FINISH!" banners and confetti explosions.
 * **Black Ice Data Vault**: A complex vault-breach circuit with narrow corridors, switchbacks, and moving firewall gates.
+* **Regulatory Dragon Run**: A long escape boulevard where a compliance dragon chases racers and fires audit projectiles.
 
 ---
 
