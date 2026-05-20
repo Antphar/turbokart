@@ -1933,6 +1933,28 @@ function absorbFatalHitWithShield(kart, x, y) {
   return true;
 }
 
+function drawKartNameTag(ctx, kart, time) {
+  if (!kart || kart.eliminated) return;
+  ctx.save();
+  const nx = kart.x;
+  const ny = kart.y + 22;
+  ctx.font = "bold 8px 'SFMono-Regular', Consolas, monospace";
+  ctx.textAlign = "center";
+  ctx.textBaseline = "top";
+
+  const isUlt = kart.ultActiveTimer > 0;
+  const alpha = isUlt ? 0.6 + 0.3 * Math.sin(time * 0.02) : 0.65;
+  ctx.fillStyle = `rgba(0,0,0,${alpha * 0.6})`;
+  const tw = ctx.measureText(kart.name).width;
+  roundRect(ctx, nx - tw / 2 - 4, ny - 1, tw + 8, 12, 3);
+  ctx.fill();
+
+  ctx.fillStyle = kart.color;
+  ctx.globalAlpha = alpha;
+  ctx.fillText(kart.name, nx, ny + 1);
+  ctx.restore();
+}
+
 function drawSpeechBubble(ctx, kart) {
   if (!kart.activeQuote || kart.quoteTimer <= 0) return;
 
@@ -2693,42 +2715,42 @@ const Sound = {
     {
       name: "Systematic Review",
       tempo: 124,
-      icon: "SR",
+      iconSVG: (c) => `<svg width="20" height="20" viewBox="0 0 16 16" shape-rendering="crispEdges"><rect x="1" y="2" width="10" height="12" rx="1" fill="${c}" opacity="0.3"/><rect x="1" y="2" width="10" height="2" fill="${c}"/><rect x="3" y="6" width="6" height="1" fill="${c}" opacity="0.8"/><rect x="3" y="8" width="5" height="1" fill="${c}" opacity="0.6"/><rect x="3" y="10" width="7" height="1" fill="${c}" opacity="0.8"/><rect x="3" y="12" width="4" height="1" fill="${c}" opacity="0.5"/><circle cx="13" cy="11" r="2.5" fill="none" stroke="${c}" stroke-width="1.5"/><line x1="15" y1="13" x2="15" y2="15" stroke="${c}" stroke-width="1.5" stroke-linecap="round"/></svg>`,
       color: "#57f2ff",
       style: "Synthwave Cruise"
     },
     {
       name: "Adverse Event Report",
       tempo: 128,
-      icon: "AE",
+      iconSVG: (c) => `<svg width="20" height="20" viewBox="0 0 16 16" shape-rendering="crispEdges"><polygon points="8,1 15,13 1,13" fill="${c}" opacity="0.25"/><polygon points="8,2 14,12 2,12" fill="none" stroke="${c}" stroke-width="1.2"/><rect x="7" y="5" width="2" height="4" rx="0.5" fill="${c}"/><rect x="7" y="10" width="2" height="2" rx="0.5" fill="${c}"/></svg>`,
       color: "#ff4d6d",
       style: "Acid Sprint"
     },
     {
       name: "Protocol Amendment",
       tempo: 118,
-      icon: "PA",
+      iconSVG: (c) => `<svg width="20" height="20" viewBox="0 0 16 16" shape-rendering="crispEdges"><rect x="2" y="1" width="9" height="13" rx="1" fill="${c}" opacity="0.2"/><rect x="2" y="1" width="9" height="13" rx="1" fill="none" stroke="${c}" stroke-width="1"/><rect x="4" y="4" width="5" height="1" fill="${c}" opacity="0.7"/><rect x="4" y="6" width="4" height="1" fill="${c}" opacity="0.5"/><rect x="4" y="8" width="5" height="1" fill="${c}" opacity="0.7"/><line x1="12" y1="8" x2="15" y2="5" stroke="${c}" stroke-width="1.5" stroke-linecap="round"/><line x1="12" y1="8" x2="12" y2="14" stroke="${c}" stroke-width="1.5" stroke-linecap="round"/></svg>`,
       color: "#a4ff80",
       style: "Chiptune Flow"
     },
     {
       name: "Phase III Approval",
       tempo: 128,
-      icon: "P3",
+      iconSVG: (c) => `<svg width="20" height="20" viewBox="0 0 16 16" shape-rendering="crispEdges"><rect x="3" y="4" width="10" height="6" rx="3" fill="${c}" opacity="0.3"/><rect x="3" y="4" width="10" height="6" rx="3" fill="none" stroke="${c}" stroke-width="1.2"/><line x1="8" y1="5" x2="8" y2="9" stroke="${c}" stroke-width="1" opacity="0.6"/><rect x="5" y="11" width="6" height="2" rx="1" fill="${c}" opacity="0.4"/><rect x="6" y="13" width="4" height="1" fill="${c}" opacity="0.3"/><circle cx="8" cy="2" r="1" fill="${c}"/></svg>`,
       color: "#b983ff",
       style: "Heavy Modern Banger"
     },
     {
       name: "Post-Market Surveillance",
       tempo: 85,
-      icon: "PM",
+      iconSVG: (c) => `<svg width="20" height="20" viewBox="0 0 16 16" shape-rendering="crispEdges"><circle cx="6" cy="8" r="4" fill="${c}" opacity="0.15"/><circle cx="6" cy="8" r="4" fill="none" stroke="${c}" stroke-width="1.2"/><circle cx="6" cy="8" r="1.5" fill="${c}" opacity="0.5"/><line x1="9" y1="11" x2="14" y2="14" stroke="${c}" stroke-width="2" stroke-linecap="round"/><rect x="4" y="6" width="1" height="4" fill="${c}" opacity="0.4"/><rect x="7" y="5" width="1" height="3" fill="${c}" opacity="0.4"/></svg>`,
       color: "#ff6b35",
       style: "Dirty Downtempo"
     },
     {
       name: "Regulatory Submission",
       tempo: 136,
-      icon: "RS",
+      iconSVG: (c) => `<svg width="20" height="20" viewBox="0 0 16 16" shape-rendering="crispEdges"><rect x="2" y="3" width="12" height="10" rx="1" fill="${c}" opacity="0.15"/><rect x="2" y="3" width="12" height="3" fill="${c}" opacity="0.35"/><rect x="2" y="3" width="12" height="10" rx="1" fill="none" stroke="${c}" stroke-width="1"/><rect x="4" y="8" width="3" height="3" fill="${c}" opacity="0.5"/><rect x="9" y="8" width="3" height="3" fill="${c}" opacity="0.3"/><polyline points="5,4 8,2 11,4" fill="none" stroke="${c}" stroke-width="1" opacity="0.8"/></svg>`,
       color: "#39ff14",
       style: "Minimal Techno"
     }
@@ -2746,7 +2768,7 @@ const Sound = {
     const t = this.tracks[this.trackIdx || 0] || this.tracks[0];
     title.innerText = t.name;
     tempo.innerText = this.tempo + " BPM" + (this.tempo > t.tempo ? " (FINAL LAP!)" : "");
-    if (icon) icon.innerHTML = `<svg width="24" height="24" viewBox="0 0 24 24" fill="none"><rect x="4" y="2" width="3" height="20" rx="1" fill="${t.color}"/><rect x="10" y="6" width="3" height="12" rx="1" fill="${t.color}" opacity="0.7"/><rect x="16" y="4" width="3" height="16" rx="1" fill="${t.color}" opacity="0.85"/></svg>`;
+    if (icon) icon.innerHTML = t.iconSVG ? t.iconSVG(t.color) : "";
     toast.style.borderColor = t.color;
     toast.style.boxShadow = `0 8px 32px ${hexToRgba(t.color, 0.25)}`;
 
@@ -6607,6 +6629,22 @@ class Kart {
       }
     } else {
       this.ultraBoostActive = false;
+
+      // Idle exhaust puffs when driving without boost
+      if (Math.abs(vF) > 2.5 && Math.random() < 0.12 * dt) {
+        game.particles.add({
+          type: "spark",
+          x: this.x - fx * 16 + rand(-2, 2),
+          y: this.y - fy * 16 + rand(-2, 2),
+          vx: -fx * rand(0.5, 1.5) + rand(-0.3, 0.3),
+          vy: -fy * rand(0.5, 1.5) + rand(-0.3, 0.3),
+          life: rand(12, 22),
+          maxLife: 22,
+          size: rand(2, 4),
+          color: "rgba(180, 180, 200, 0.25)",
+          drag: 0.96
+        });
+      }
     }
 
     if (this.citationBoostTimer > 0) this.citationBoostTimer -= dt;
@@ -6750,14 +6788,27 @@ class Kart {
     ctx.arc(-1, 0, 3, 0, TAU);
     ctx.fill();
 
-    // Front bumper / lights
-    ctx.fillStyle = "#fff5b0";
+    // Front headlights with glow
+    const headlightBrightness = 0.8 + 0.2 * Math.sin(time * 0.008 + this.x * 0.01);
+    ctx.shadowBlur = 6;
+    ctx.shadowColor = `rgba(255, 245, 176, ${headlightBrightness * 0.6})`;
+    ctx.fillStyle = `rgba(255, 245, 176, ${headlightBrightness})`;
     ctx.fillRect(13, -7, 2, 4);
     ctx.fillRect(13, 3, 2, 4);
+    ctx.shadowBlur = 0;
 
     // Spoiler (rear)
     ctx.fillStyle = this._darken(this.color, 0.55);
     ctx.fillRect(-15, -9, 3, 18);
+
+    // Taillights (glow red when braking/slow)
+    const isBraking = this.speed() < 1.5 || this.spinoutTimer > 0;
+    const tailAlpha = isBraking ? 0.9 : 0.3;
+    ctx.fillStyle = `rgba(255, 40, 40, ${tailAlpha})`;
+    if (isBraking) { ctx.shadowBlur = 6; ctx.shadowColor = "#ff2828"; }
+    ctx.fillRect(-16, -7, 2, 3);
+    ctx.fillRect(-16, 4, 2, 3);
+    ctx.shadowBlur = 0;
 
     // Character-specific kart decorations
     if (this.charId === "anton") {
@@ -9375,8 +9426,9 @@ function drawWorld(pKart, left, top, width, height, time, isP2) {
   const sorted = activeKarts.slice().sort((a, b) => a.y - b.y);
   for (const k of sorted) k.draw(ctx, time);
 
-  // Speech bubbles above karts
+  // Name tags below karts + speech bubbles above
   for (const k of sorted) {
+    drawKartNameTag(ctx, k, time);
     drawSpeechBubble(ctx, k);
   }
 
@@ -10484,7 +10536,6 @@ function drawSpeedo(x, y, size, player) {
   if (!player) return;
   ctx.save();
   ctx.translate(x, y);
-  // Background
   ctx.fillStyle = "rgba(8, 10, 24, 0.65)";
   roundRect(ctx, 0, 0, size, size, 14); ctx.fill();
   ctx.strokeStyle = "rgba(255,255,255,0.08)";
@@ -10492,33 +10543,61 @@ function drawSpeedo(x, y, size, player) {
 
   const cx = size / 2, cy = size / 2 + 14;
   const radius = size / 2 - 22;
+
+  // Tick marks around the arc
+  ctx.strokeStyle = "rgba(255,255,255,0.25)";
+  ctx.lineWidth = 1;
+  for (let i = 0; i <= 10; i++) {
+    const tickAng = Math.PI + (Math.PI * i / 10);
+    const isMajor = i % 2 === 0;
+    const inner = radius - (isMajor ? 10 : 6);
+    const outer = radius + 2;
+    ctx.lineWidth = isMajor ? 1.5 : 0.8;
+    ctx.beginPath();
+    ctx.moveTo(cx + Math.cos(tickAng) * inner, cy + Math.sin(tickAng) * inner);
+    ctx.lineTo(cx + Math.cos(tickAng) * outer, cy + Math.sin(tickAng) * outer);
+    ctx.stroke();
+  }
+
   // Arc background
   ctx.lineWidth = 8;
-  ctx.strokeStyle = "rgba(255,255,255,0.1)";
+  ctx.strokeStyle = "rgba(255,255,255,0.08)";
   ctx.beginPath();
   ctx.arc(cx, cy, radius, Math.PI, TAU);
   ctx.stroke();
 
-  // Arc filled by speed
   const sp = player.speed();
   const maxDisplay = 8.5;
   const frac = clamp(sp / maxDisplay, 0, 1);
   const col = sp > 7 ? "#ff66cc" : sp > 5 ? "#ffd86b" : "#66ddff";
+
+  // Arc filled with glow
+  ctx.shadowBlur = 10;
+  ctx.shadowColor = col;
   ctx.strokeStyle = col;
+  ctx.lineWidth = 8;
   ctx.beginPath();
   ctx.arc(cx, cy, radius, Math.PI, Math.PI + Math.PI * frac);
   ctx.stroke();
+  ctx.shadowBlur = 0;
 
-  // Needle
+  // Needle with glow
   const ang = Math.PI + Math.PI * frac;
-  ctx.strokeStyle = "#fff";
-  ctx.lineWidth = 2;
+  ctx.shadowBlur = 8;
+  ctx.shadowColor = col;
+  ctx.strokeStyle = col;
+  ctx.lineWidth = 2.5;
   ctx.beginPath();
   ctx.moveTo(cx, cy);
-  ctx.lineTo(cx + Math.cos(ang) * radius, cy + Math.sin(ang) * radius);
+  ctx.lineTo(cx + Math.cos(ang) * (radius - 4), cy + Math.sin(ang) * (radius - 4));
   ctx.stroke();
-  ctx.fillStyle = "#fff";
+  ctx.shadowBlur = 0;
+
+  // Center hub
+  ctx.fillStyle = col;
   ctx.beginPath(); ctx.arc(cx, cy, 4, 0, TAU); ctx.fill();
+  ctx.fillStyle = "#050510";
+  ctx.beginPath(); ctx.arc(cx, cy, 2, 0, TAU); ctx.fill();
 
   // Numeric
   ctx.fillStyle = "#fff";
@@ -10530,9 +10609,12 @@ function drawSpeedo(x, y, size, player) {
   ctx.fillText("KM/H", cx, cy + 8);
 
   if (player.boostTimer > 0) {
+    const pulse = 0.7 + 0.3 * Math.sin(performance.now() * 0.01);
+    ctx.globalAlpha = pulse;
     ctx.fillStyle = "#ff8a3b";
     ctx.font = "bold 10px sans-serif";
     ctx.fillText("BOOST", cx, 18);
+    ctx.globalAlpha = 1;
   }
 
   ctx.restore();
@@ -10815,6 +10897,28 @@ function showFinishScreen() {
       finishTitle.textContent = playerPlace === 1 ? "Victory!" : "Race Over";
       finishTitle.style.background = "";
       let html = "";
+
+      // Pixel-art podium for top 3
+      const top3 = ranking.slice(0, Math.min(3, ranking.length));
+      html += `<div style="display:flex;align-items:flex-end;justify-content:center;gap:6px;margin-bottom:14px;padding:8px 0;">`;
+      const podiumH = [72, 90, 58];
+      const podiumOrder = top3.length >= 2 ? [1, 0, 2] : [0];
+      podiumOrder.forEach(pi => {
+        const k = top3[pi];
+        if (!k) return;
+        const h = podiumH[pi] || 50;
+        const charDef = CHARACTERS.find(c => c.id === k.charId) || CHARACTERS[0];
+        const place = pi + 1;
+        const crown = place === 1 ? `<svg width="20" height="12" viewBox="0 0 20 12" style="display:block;margin:0 auto 2px;"><polygon points="2,10 4,4 7,7 10,2 13,7 16,4 18,10" fill="#ffd86b" stroke="#a87a13" stroke-width="0.8"/><rect x="2" y="10" width="16" height="2" rx="1" fill="#ffd86b"/></svg>` : "";
+        html += `<div style="display:flex;flex-direction:column;align-items:center;width:80px;">`;
+        html += crown;
+        html += `<div style="width:36px;height:36px;border-radius:50%;background:${charDef.gradient};display:flex;align-items:center;justify-content:center;box-shadow:0 0 10px ${charDef.colorGlow};margin-bottom:4px;">${getCharAvatarSVG({...charDef, color: "#050510"}).replace(/width="48"/g,'width="28"').replace(/height="48"/g,'height="28"')}</div>`;
+        html += `<div style="font-weight:900;font-size:11px;color:${k.color};margin-bottom:2px;">${k.name}</div>`;
+        html += `<div style="width:70px;height:${h}px;background:linear-gradient(180deg,${k.color}33,${k.color}11);border:1px solid ${k.color}55;border-radius:6px 6px 0 0;display:flex;align-items:center;justify-content:center;font-weight:900;font-size:22px;color:${k.color};">${place}</div>`;
+        html += `</div>`;
+      });
+      html += `</div>`;
+
       html += `<div class="row"><span class="label">Your Place</span><span class="value"><span class="place-badge place-${Math.min(playerPlace, 4)}">${ordinal(playerPlace)}</span></span></div>`;
       html += `<div class="row"><span class="label">Final Time</span><span class="value">${game.player.finished ? formatTime(game.player.finishTime) : formatTime(game.raceTime)}</span></div>`;
       html += `<div class="row"><span class="label">Citations Collected</span><span class="value">${game.player.coinsCollected}</span></div>`;
@@ -10865,7 +10969,7 @@ function renderMusicSettings() {
     card.type = "button";
     card.className = "music-card" + (Sound.trackIdx === idx ? " selected" : "");
     card.innerHTML = `
-      <div class="music-card-title"><span style="display:inline-flex;align-items:center;justify-content:center;width:26px;height:26px;border-radius:6px;background:${track.color}22;border:1px solid ${track.color}55;color:${track.color};font-size:10px;font-weight:900;letter-spacing:0.5px;font-family:monospace;">${track.icon}</span><span>${track.name}</span></div>
+      <div class="music-card-title"><span style="display:inline-flex;align-items:center;justify-content:center;width:28px;height:28px;border-radius:7px;background:${track.color}18;border:1px solid ${track.color}44;">${track.iconSVG(track.color)}</span><span>${track.name}</span></div>
       <div class="music-card-meta">${track.tempo} BPM · ${track.style}</div>
     `;
     card.addEventListener("click", () => {
