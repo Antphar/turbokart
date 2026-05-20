@@ -792,7 +792,7 @@
     <div style="display:flex; flex-direction:column; gap:12px;">
       <button class="btn btn-alt" id="start-1p-btn">1 Player Race</button>
       <button class="btn btn-alt" id="start-2p-btn" style="background: rgba(255, 255, 255, 0.05); color: #fff;">2 Players Split-Screen</button>
-      <button class="btn" id="start-p2p-btn" style="background: linear-gradient(135deg, #7b75ff, #57f2ff); box-shadow: 0 4px 15px rgba(123, 117, 255, 0.35);">P2P Wi-Fi Multiplayer</button>
+      <button class="btn" id="start-p2p-btn" style="background: linear-gradient(135deg, #7b75ff, #57f2ff); box-shadow: 0 4px 15px rgba(123, 117, 255, 0.35);">Online PvP</button>
       <button class="btn btn-alt" id="settings-btn" type="button" style="background: rgba(255, 255, 255, 0.08); color: #fff;">Settings</button>
       <button class="btn crt-toggle" id="crt-toggle-btn" type="button">CRT Overlay: Off</button>
     </div>
@@ -815,7 +815,7 @@
   <!-- P2P Setup Screen -->
   <div id="p2p-screen" class="overlay hidden">
     <div class="title-text" style="font-size: clamp(32px, 5.5vw, 64px); margin-bottom: 4px;">P2P Multiplayer</div>
-    <div class="subtitle" style="margin-bottom: 12px; color: #57f2ff;">Local Wi-Fi Connection via WebRTC</div>
+    <div class="subtitle" style="margin-bottom: 12px; color: #57f2ff;">Online PvP via WebRTC</div>
 
     <div class="p2p-panel">
       <!-- HOST SECTION -->
@@ -11403,9 +11403,31 @@ p2pHostBtn.addEventListener("click", () => {
       if (peer) {
         try { peer.destroy(); } catch(e) {}
       }
-      peer = new Peer("TKD-" + code);
+      peer = new Peer("TKD-" + code, {
+        config: {
+          iceServers: [
+            { urls: "stun:stun.l.google.com:19302" },
+            { urls: "stun:stun1.l.google.com:19302" },
+            { urls: "stun:stun2.l.google.com:19302" },
+            { urls: "stun:stun.stunprotocol.org:3478" },
+            { urls: "turn:openrelay.metered.ca:80", username: "openrelayproject", credential: "openrelayproject" },
+            { urls: "turn:openrelay.metered.ca:443", username: "openrelayproject", credential: "openrelayproject" },
+            { urls: "turn:openrelay.metered.ca:443?transport=tcp", username: "openrelayproject", credential: "openrelayproject" }
+          ],
+          iceCandidatePoolSize: 10
+        }
+      });
+
+      const hostTimeout = setTimeout(() => {
+        if (!game.p2pMode) {
+          p2pHostStatus.innerText = "Connection timed out. Try again.";
+          p2pHostStatus.className = "p2p-status error";
+          try { peer.destroy(); } catch(e) {}
+        }
+      }, 15000);
 
       peer.on("open", (id) => {
+        clearTimeout(hostTimeout);
         p2pHostStatus.innerText = "Lobby active. Waiting for players...";
         p2pHostStatus.className = "p2p-status ready";
         p2pMyCode.innerText = code;
@@ -11483,14 +11505,36 @@ p2pJoinBtn.addEventListener("click", () => {
       if (peer) {
         try { peer.destroy(); } catch(e) {}
       }
-      peer = new Peer();
+      peer = new Peer(undefined, {
+        config: {
+          iceServers: [
+            { urls: "stun:stun.l.google.com:19302" },
+            { urls: "stun:stun1.l.google.com:19302" },
+            { urls: "stun:stun2.l.google.com:19302" },
+            { urls: "stun:stun.stunprotocol.org:3478" },
+            { urls: "turn:openrelay.metered.ca:80", username: "openrelayproject", credential: "openrelayproject" },
+            { urls: "turn:openrelay.metered.ca:443", username: "openrelayproject", credential: "openrelayproject" },
+            { urls: "turn:openrelay.metered.ca:443?transport=tcp", username: "openrelayproject", credential: "openrelayproject" }
+          ],
+          iceCandidatePoolSize: 10
+        }
+      });
 
       peer.on("open", (id) => {
         p2pJoinStatus.innerText = "Connecting to lobby " + rawCode + "...";
-        const conn = peer.connect("TKD-" + rawCode, { serialization: "json" });
+        const conn = peer.connect("TKD-" + rawCode, { serialization: "json", reliable: true });
         game.p2pConn = conn;
 
+        const joinTimeout = setTimeout(() => {
+          if (!game.p2pMode) {
+            p2pJoinStatus.innerText = "Connection timed out. The host may be behind a strict firewall. Try having them join your lobby instead.";
+            p2pJoinStatus.className = "p2p-status error";
+            try { conn.close(); } catch(e) {}
+          }
+        }, 12000);
+
         conn.on("open", () => {
+          clearTimeout(joinTimeout);
           p2pJoinStatus.innerText = "Connected! Joining lobby...";
           p2pJoinStatus.className = "p2p-status ready";
           game.p2pMode = true;
@@ -11539,7 +11583,7 @@ function loadPeerJS(callback) {
     return;
   }
   const script = document.createElement("script");
-  script.src = "https://unpkg.com/peerjs@1.4.7/dist/peerjs.min.js";
+  script.src = "https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js";
   script.onload = () => {
     callback();
   };
