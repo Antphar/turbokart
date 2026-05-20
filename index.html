@@ -1423,6 +1423,7 @@ function applyDeauthShockwave(sourceKart) {
       kart.spinoutTimer = Math.max(kart.spinoutTimer, 32);
       kart.spinAngle = 0;
       triggerQuote(kart, "crash");
+      if (kart.isPlayer) triggerHitFlash("DE-AUTH!", "#ff3366", 80);
       if (game.particles) {
         game.particles.add({
           type: "text",
@@ -1497,7 +1498,7 @@ function startMergeRequestPull(kart) {
 
   kart.mergePullTarget = target;
   kart.mergePullTargetId = getKartId(target);
-  kart.mergePullTimer = 95;
+  kart.mergePullTimer = 110;
   triggerQuote(kart, "boost");
   if (game.particles) {
     game.particles.add({
@@ -1536,15 +1537,20 @@ function applyMergeRequestPull(kart, dt) {
     kart.mergePullTimer = 0;
     kart.mergePullTarget = null;
     kart.mergePullTargetId = null;
-    kart.boostTimer = Math.max(kart.boostTimer, 24);
+    kart.boostTimer = Math.max(kart.boostTimer, 48);
     return;
   }
 
   const nx = dx / Math.max(0.001, d);
   const ny = dy / Math.max(0.001, d);
-  const pull = clamp((d - 55) / 360, 0.08, 0.42);
+  const pull = clamp((d - 55) / 280, 0.12, 0.65);
   kart.vx += nx * pull * dt;
   kart.vy += ny * pull * dt;
+
+  const pushback = clamp((d - 55) / 500, 0.04, 0.25);
+  target.vx -= nx * pushback * dt;
+  target.vy -= ny * pushback * dt;
+
   kart.mergePullTimer -= dt;
 
   if (game.particles && Math.random() < 0.35 * dt) {
@@ -1558,6 +1564,21 @@ function applyMergeRequestPull(kart, dt) {
       maxLife: 14,
       size: rand(1.5, 3),
       color: "rgba(57, 255, 20, 0.55)",
+      drag: 0.95
+    });
+  }
+
+  if (game.particles && Math.random() < 0.25 * dt) {
+    game.particles.add({
+      type: "line",
+      x: target.x + rand(-4, 4),
+      y: target.y + rand(-4, 4),
+      vx: -nx * rand(1.5, 3),
+      vy: -ny * rand(1.5, 3),
+      life: 12,
+      maxLife: 12,
+      size: rand(1.5, 2.5),
+      color: "rgba(57, 255, 20, 0.4)",
       drag: 0.95
     });
   }
@@ -1680,6 +1701,7 @@ function activateUltimate(kart) {
     for (const k of getActiveKarts()) {
       if (k === kart || k.finished || k.eliminated) continue;
       k.doubleBlindTimer = Math.max(k.doubleBlindTimer, duration);
+      if (k.isPlayer) triggerHitFlash("TYPO STORM!", "#ff4d6d", 90);
       if (game.particles) {
         game.particles.add({
           type: "text", text: pick(["pomrpt!", "btet!", "naalysis!", "arutr!", "manchie!"]),
@@ -1756,6 +1778,7 @@ function activateUltimate(kart) {
       k.spinoutTimer = Math.max(k.spinoutTimer, stunTime);
       k.spinAngle = 0;
       triggerQuote(k, "crash");
+      if (k.isPlayer) triggerHitFlash("THINKPAD SLAM!", "#9d4dff", 85);
     }
     for (let i = 0; i < (tier >= 3 ? 3 : tier >= 2 ? 2 : 1); i++) {
       game.particles.add({
@@ -1783,6 +1806,7 @@ function activateUltimate(kart) {
         k.itemState = "empty";
         k.itemSlot = null;
       }
+      if (k.isPlayer) triggerHitFlash(tier >= 3 ? "REGULATORY LOCKDOWN!" : "COMPLIANCE FREEZE!", "#57f2ff", 90);
       if (game.particles) {
         game.particles.add({
           type: "text", text: tier >= 3 ? "FDA REVIEW!" : "PENDING...",
@@ -1842,6 +1866,7 @@ function eliminateKart(kart, label = "ELIMINATED!", x = null, y = null, color = 
     Sound.crash();
     game.shake = Math.max(game.shake, 14);
     game.flash = Math.max(game.flash, 10);
+    triggerHitFlash(label, color, 100);
   }
   if (game.particles) {
     game.particles.burst(hitX, hitY, color, 44, { type: "spark", spdMin: 3, spdMax: 8 });
@@ -7277,7 +7302,112 @@ const game = {
   dragonWarnTimer: 0,
   bestLap: 0,
   p2pLastPickupSyncAt: 0,
+  hitFlash: null,
 };
+
+function triggerHitFlash(text, color, duration = 90) {
+  game.hitFlash = { text, color, timer: duration, maxTimer: duration };
+}
+
+function drawHitFlash(ctx, time) {
+  if (!game.hitFlash || game.hitFlash.timer <= 0) return;
+  const hf = game.hitFlash;
+  const t = clamp(hf.timer / hf.maxTimer, 0, 1);
+
+  const fadeIn = clamp((hf.maxTimer - hf.timer) / 8, 0, 1);
+  const fadeOut = clamp(hf.timer / 20, 0, 1);
+  const alpha = Math.min(fadeIn, fadeOut);
+
+  ctx.save();
+
+  const vignetteAlpha = alpha * 0.35;
+  const vGrad = ctx.createRadialGradient(VIEW_W / 2, VIEW_H / 2, VIEW_W * 0.25, VIEW_W / 2, VIEW_H / 2, VIEW_W * 0.7);
+  vGrad.addColorStop(0, "rgba(0,0,0,0)");
+  vGrad.addColorStop(1, hexToRgba(hf.color, vignetteAlpha));
+  ctx.fillStyle = vGrad;
+  ctx.fillRect(0, 0, VIEW_W, VIEW_H);
+
+  const scale = 1 + (1 - fadeIn) * 0.8;
+  ctx.translate(VIEW_W / 2, VIEW_H * 0.35);
+  ctx.scale(scale, scale);
+  ctx.globalAlpha = alpha;
+
+  ctx.shadowBlur = 30;
+  ctx.shadowColor = hf.color;
+  ctx.fillStyle = hf.color;
+  ctx.font = "bold 52px sans-serif";
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  ctx.fillText(hf.text, 0, 0);
+
+  ctx.shadowBlur = 0;
+  ctx.strokeStyle = "rgba(255,255,255,0.6)";
+  ctx.lineWidth = 1.5;
+  ctx.strokeText(hf.text, 0, 0);
+
+  ctx.restore();
+}
+
+function drawStatusEffects(ctx, x, y, kart, time) {
+  if (!kart) return;
+  const effects = [];
+  if (kart.shieldTimer > 0) effects.push({ label: "SHIELD", color: "#57f2ff", ratio: kart.shieldTimer / (kart.charId === "rissal" ? TUNING.SHIELD_DURATION_RISSAL : TUNING.SHIELD_DURATION) });
+  if (kart.boostTimer > 0) effects.push({ label: "BOOST", color: "#fd9927", ratio: kart.boostTimer / TUNING.BOOST_DURATION });
+  if (kart.handlingTimer > 0) effects.push({ label: "HANDLING+", color: "#a4ff80", ratio: kart.handlingTimer / TUNING.HANDLING_DURATION });
+  if (kart.doubleBlindTimer > 0) effects.push({ label: "BLINDED", color: "#bd57ff", ratio: kart.doubleBlindTimer / TUNING.DOUBLE_BLIND_DURATION });
+  if (kart.placeboSlowTimer > 0) effects.push({ label: "SLOWED", color: "#ffcc00", ratio: kart.placeboSlowTimer / TUNING.PLACEBO_SLOW_DURATION });
+  if (kart.invuln > 0) effects.push({ label: "INVULN", color: "#ff00ff", ratio: kart.invuln / TUNING.HOTFIX_DURATION });
+  if (kart.mergePullTimer > 0) effects.push({ label: "TETHERED", color: "#39ff14", ratio: kart.mergePullTimer / 110 });
+  if (kart.spinoutTimer > 0) effects.push({ label: "SPINNING", color: "#ff4d6d", ratio: kart.spinoutTimer / TUNING.SPINOUT_TIME });
+  if (kart.ultActiveTimer > 0) effects.push({ label: "ULTIMATE", color: kart.color, ratio: kart.ultActiveTimer / (TUNING.ULTIMATE_DURATION_BASE + (kart.ultTier || 1) * 30) });
+
+  if (effects.length === 0) return;
+
+  const barW = 110, barH = 14, gap = 4;
+  const panelH = effects.length * (barH + gap) + 8;
+
+  ctx.save();
+  ctx.translate(x, y);
+
+  ctx.fillStyle = "rgba(8, 10, 24, 0.65)";
+  roundRect(ctx, 0, 0, barW + 16, panelH, 10);
+  ctx.fill();
+  ctx.strokeStyle = "rgba(255,255,255,0.08)";
+  ctx.lineWidth = 1;
+  roundRect(ctx, 0.5, 0.5, barW + 15, panelH - 1, 10);
+  ctx.stroke();
+
+  effects.forEach((eff, i) => {
+    const ey = 4 + i * (barH + gap);
+    const ratio = clamp(eff.ratio, 0, 1);
+
+    ctx.fillStyle = "rgba(255,255,255,0.08)";
+    roundRect(ctx, 8, ey, barW, barH, 3);
+    ctx.fill();
+
+    const isDebuff = (eff.label === "BLINDED" || eff.label === "SLOWED" || eff.label === "SPINNING");
+    const pulse = isDebuff ? (0.6 + 0.4 * Math.sin(time * 0.02)) : 1;
+
+    ctx.fillStyle = hexToRgba(eff.color, 0.7 * pulse);
+    roundRect(ctx, 8, ey, barW * ratio, barH, 3);
+    ctx.fill();
+
+    if (isDebuff) {
+      ctx.strokeStyle = hexToRgba(eff.color, 0.8 * pulse);
+      ctx.lineWidth = 1.5;
+      roundRect(ctx, 8, ey, barW, barH, 3);
+      ctx.stroke();
+    }
+
+    ctx.fillStyle = "#fff";
+    ctx.font = "bold 9px sans-serif";
+    ctx.textAlign = "left";
+    ctx.textBaseline = "middle";
+    ctx.fillText(eff.label, 12, ey + barH / 2);
+  });
+
+  ctx.restore();
+}
 
 function renderSelectScreen() {
   const container = document.getElementById("cards-container");
@@ -8650,13 +8780,13 @@ function update(dt, time) {
                   kart.itemState = "empty";
                   kart.itemSlot = null;
                 }
-                if (kart.isPlayer) Sound.crash();
+                if (kart.isPlayer) { Sound.crash(); triggerHitFlash("PLACEBO!", "#ffcc00", 80); game.flash = Math.max(game.flash, 6); }
                 game.particles.burst(h.x, h.y, "#ffcc00", 22, { type: "spark", spdMin: 1.5, spdMax: 5 });
                 game.particles.add({ type: "text", text: "PLACEBO!", x: h.x, y: h.y - 20,
                   vx: rand(-0.5, 0.5), vy: -1.2, life: 75, maxLife: 75, size: 20, color: "#ffcc00", drag: 0.98 });
               } else if (isDoubleBlind) {
                 kart.doubleBlindTimer = Math.max(kart.doubleBlindTimer || 0, TUNING.DOUBLE_BLIND_DURATION);
-                if (kart.isPlayer) { Sound.noise(0.18, 0.08, 500); game.shake = Math.max(game.shake, 5); }
+                if (kart.isPlayer) { Sound.noise(0.18, 0.08, 500); game.shake = Math.max(game.shake, 5); triggerHitFlash("DOUBLE BLIND!", "#bd57ff", 90); game.flash = Math.max(game.flash, 8); }
                 game.particles.burst(h.x, h.y, "#bd57ff", 24, { type: "spark", spdMin: 1.2, spdMax: 4 });
                 game.particles.add({ type: "text", text: "DOUBLE BLIND!", x: h.x, y: h.y - 28,
                   vx: rand(-0.5, 0.5), vy: -1.2, life: 85, maxLife: 85, size: 20, color: "#bd57ff", drag: 0.98 });
@@ -8665,6 +8795,7 @@ function update(dt, time) {
                 if (kart.isPlayer) { Sound.crash(); game.shake = Math.max(game.shake, 8); }
                 const hazardColor = isDossier ? "#57f2ff" : (isRegulatory ? "#ff3366" : "#ff4d6d");
                 const hazardText = isDossier ? "AUDITED!" : (isRegulatory ? "REGULATED!" : "CONFLICT!");
+                if (kart.isPlayer) triggerHitFlash(hazardText, hazardColor, 80);
                 game.particles.burst(h.x, h.y, hazardColor, 20, { type: "spark", spdMin: 2, spdMax: 5.5 });
                 game.particles.add({ type: "text", text: hazardText, x: h.x, y: h.y - 20,
                   vx: rand(-0.5, 0.5), vy: -1.2, life: 75, maxLife: 75, size: 20, color: hazardColor, drag: 0.98 });
@@ -8746,6 +8877,7 @@ function update(dt, time) {
                 kart.vx = nx * 5.5;
                 kart.vy = ny * 5.5;
                 triggerQuote(kart, "crash");
+                if (kart.isPlayer) triggerHitFlash("BLACK ICE!", obj.color, 75);
                 game.particles.burst(obj.x, obj.y, obj.color, 24, { type: "spark", spdMin: 2, spdMax: 6 });
                 game.particles.add({
                   type: "text",
@@ -8782,6 +8914,7 @@ function update(dt, time) {
     // Effects decay
     if (game.shake > 0) game.shake = Math.max(0, game.shake - dt * 0.45);
     if (game.flash > 0) game.flash = Math.max(0, game.flash - dt * 0.35);
+    if (game.hitFlash && game.hitFlash.timer > 0) game.hitFlash.timer -= dt;
 
     // Position & Overtake checks
     const ranking = rankAll();
@@ -9573,6 +9706,12 @@ function drawHUD(time) {
   ctx.fillStyle = "#ffffff";
   ctx.fillText("REGULAIDO AUTOPILOT ACTIVE", wmX + 110, wmY + wmH / 2);
 
+  // Active status effects panel (right side, above minimap)
+  drawStatusEffects(ctx, VIEW_W - 200, VIEW_H - 400, game.player, time);
+
+  // Hit flash overlay
+  drawHitFlash(ctx, time);
+
   // Mute indicator
   if (Sound.muted) {
     ctx.fillStyle = "rgba(0,0,0,0.45)";
@@ -9993,6 +10132,13 @@ function drawHUDMultiplayer(time) {
   ctx.fillText(dotPulse, wmX + 18, wmY + wmH / 2);
   ctx.fillStyle = "#ffffff";
   ctx.fillText("REGULAIDO SYSTEM ACTIVE", wmX + 95, wmY + wmH / 2);
+
+  // Active status effects panels
+  drawStatusEffects(ctx, 15, VIEW_H / 2 - 60, game.player, time);
+  drawStatusEffects(ctx, VIEW_W - 140, VIEW_H / 2 - 60, game.player2, time);
+
+  // Hit flash overlay
+  drawHitFlash(ctx, time);
 
   // Mute indicator
   if (Sound.muted) {
