@@ -10513,23 +10513,45 @@ function rebuild3DTrack() {
     });
   }
 
-  // Boost pads
+  // Boost pads (glowing chevron arrows on the road)
   if (game.track.boostPads) {
     game.track.boostPads.forEach(bp => {
+      const padGroup = new T.Group();
+      // Base pad
       const padGeo = new T.BoxGeometry(bp.w || 70, 1.5, bp.h || 36);
       const padMat = new T.MeshStandardMaterial({
-        color: 0xa4ff80,
-        emissive: 0xa4ff80,
-        emissiveIntensity: 0.45,
-        transparent: true,
-        opacity: 0.75,
+        color: 0xa4ff80, emissive: 0xa4ff80, emissiveIntensity: 0.5,
+        transparent: true, opacity: 0.6,
       });
-      const pad = new T.Mesh(padGeo, padMat);
-      pad.position.set(bp.x, 2, bp.y);
-      pad.rotation.y = -(bp.ang || 0) + Math.PI / 2;
-      pad._boostPadRef = bp;
-      group.add(pad);
-      THREE_STATE.boostPadMeshes.push(pad);
+      padGroup.add(new T.Mesh(padGeo, padMat));
+      // Chevron arrows (3 stacked)
+      const arrowMat = new T.MeshStandardMaterial({ color: 0xffffff, emissive: 0xa4ff80, emissiveIntensity: 1.2, transparent: true, opacity: 0.8 });
+      for (let a = 0; a < 3; a++) {
+        const arrowGeo = new T.BufferGeometry();
+        arrowGeo.setAttribute("position", new T.Float32BufferAttribute([
+          0, 0, -10, -12, 0, 4, 0, 0, 0,
+          0, 0, -10, 0, 0, 0, 12, 0, 4,
+        ], 3));
+        arrowGeo.computeVertexNormals();
+        const arrow = new T.Mesh(arrowGeo, arrowMat);
+        arrow.position.z = -10 + a * 10;
+        arrow.position.y = 1.2;
+        padGroup.add(arrow);
+      }
+      // Side glow bars
+      const barMat = new T.MeshStandardMaterial({ color: 0xa4ff80, emissive: 0xa4ff80, emissiveIntensity: 0.9 });
+      [[-1, 1], [1, 1]].forEach(([s]) => {
+        const bar = new T.Mesh(new T.BoxGeometry(2, 2, (bp.h || 36) + 4), barMat);
+        bar.position.x = s * ((bp.w || 70) / 2 + 1);
+        bar.position.y = 1.5;
+        padGroup.add(bar);
+      });
+      padGroup.position.set(bp.x, 1.5, bp.y);
+      padGroup.rotation.y = -(bp.ang || 0) + Math.PI / 2;
+      padGroup._boostPadRef = bp;
+      padGroup._padMat = padMat;
+      group.add(padGroup);
+      THREE_STATE.boostPadMeshes.push(padGroup);
     });
   }
 
@@ -10560,23 +10582,38 @@ function rebuild3DTrack() {
     });
   }
 
-  // Moving firewall gates
+  // Moving firewall gates (translucent walls with scan lines and warning glow)
   if (game.track.movingObjects) {
     game.track.movingObjects.forEach(obj => {
-      const gateGeo = new T.BoxGeometry(16, 45, 52);
-      const gateMat = new T.MeshStandardMaterial({
-        color: new T.Color(obj.color || "#57f2ff"),
-        emissive: new T.Color(obj.color || "#57f2ff"),
-        emissiveIntensity: 0.55,
-        transparent: true,
-        opacity: 0.72,
+      const gateGroup = new T.Group();
+      const col = new T.Color(obj.color || "#57f2ff");
+      // Main wall panel
+      const wallGeo = new T.BoxGeometry(8, 50, 55);
+      const wallMat = new T.MeshStandardMaterial({
+        color: col, emissive: col, emissiveIntensity: 0.5,
+        transparent: true, opacity: 0.55, side: T.DoubleSide,
       });
-      const gate = new T.Mesh(gateGeo, gateMat);
-      gate.position.set(obj.x, 24, obj.y);
-      gate.rotation.y = -(obj.ang || 0) + Math.PI / 2;
-      gate._movingObjectRef = obj;
-      group.add(gate);
-      THREE_STATE.movingObjectMeshes.push(gate);
+      gateGroup.add(new T.Mesh(wallGeo, wallMat));
+      // Wireframe overlay for scan-line effect
+      const wireMat = new T.MeshStandardMaterial({ color: col, emissive: col, emissiveIntensity: 0.8, wireframe: true, transparent: true, opacity: 0.35 });
+      gateGroup.add(new T.Mesh(new T.BoxGeometry(10, 52, 57), wireMat));
+      // Top and bottom neon bars
+      const barMat = new T.MeshStandardMaterial({ color: col, emissive: col, emissiveIntensity: 1.2 });
+      const topBar = new T.Mesh(new T.BoxGeometry(10, 3, 58), barMat);
+      topBar.position.y = 26;
+      gateGroup.add(topBar);
+      const bottomBar = new T.Mesh(new T.BoxGeometry(10, 3, 58), barMat);
+      bottomBar.position.y = -24;
+      gateGroup.add(bottomBar);
+      // Warning light
+      const wLight = new T.PointLight(col, 0.6, 120);
+      wLight.position.y = 30;
+      gateGroup.add(wLight);
+      gateGroup.position.set(obj.x, 26, obj.y);
+      gateGroup.rotation.y = -(obj.ang || 0) + Math.PI / 2;
+      gateGroup._movingObjectRef = obj;
+      group.add(gateGroup);
+      THREE_STATE.movingObjectMeshes.push(gateGroup);
     });
   }
 
@@ -10893,53 +10930,148 @@ function createHazardMesh3D(hazard) {
   const T = window.THREE;
   const ctor = hazard.constructor ? hazard.constructor.name : "";
   let mesh;
+
   if (ctor === "MergeConflict") {
-    mesh = new T.Mesh(
+    // Git merge conflict: red wireframe cube with ">>>" conflict markers inside
+    const g = new T.Group();
+    const outer = new T.Mesh(
       new T.BoxGeometry(28, 28, 28),
-      new T.MeshStandardMaterial({ color: 0xff4d6d, emissive: 0xff4d6d, emissiveIntensity: 0.55, transparent: true, opacity: 0.72 })
+      new T.MeshStandardMaterial({ color: 0xff4d6d, emissive: 0xff4d6d, emissiveIntensity: 0.6, wireframe: true })
     );
-    mesh.position.y = 16;
+    g.add(outer);
+    const inner = new T.Mesh(
+      new T.OctahedronGeometry(12),
+      new T.MeshStandardMaterial({ color: 0xff4d6d, emissive: 0xff1a40, emissiveIntensity: 0.9, transparent: true, opacity: 0.7 })
+    );
+    g.add(inner);
+    // Conflict arrow markers (two crossing planes)
+    const arrowMat = new T.MeshStandardMaterial({ color: 0xffffff, emissive: 0xff4d6d, emissiveIntensity: 0.5, transparent: true, opacity: 0.65, side: T.DoubleSide });
+    const arr1 = new T.Mesh(new T.PlaneGeometry(20, 6), arrowMat);
+    arr1.rotation.y = Math.PI / 4;
+    arr1.position.y = 2;
+    g.add(arr1);
+    const arr2 = new T.Mesh(new T.PlaneGeometry(20, 6), arrowMat);
+    arr2.rotation.y = -Math.PI / 4;
+    arr2.position.y = -2;
+    g.add(arr2);
+    const light = new T.PointLight(0xff4d6d, 0.5, 60);
+    g.add(light);
+    g.position.y = 16;
+    mesh = g;
+
   } else if (ctor === "PlaceboPill") {
-    mesh = new T.Mesh(
-      new T.CapsuleGeometry(8, 24, 4, 8),
-      new T.MeshStandardMaterial({ color: 0xffcc00, emissive: 0xffcc00, emissiveIntensity: 0.45, transparent: true, opacity: 0.82 })
+    // Pharmaceutical pill capsule (two-tone with Rx cross)
+    const g = new T.Group();
+    const halfL = new T.Mesh(
+      new T.CapsuleGeometry(7, 10, 6, 8),
+      new T.MeshStandardMaterial({ color: 0xffcc00, emissive: 0xffcc00, emissiveIntensity: 0.4, metalness: 0.3, roughness: 0.4 })
     );
-    mesh.position.y = 13;
-    mesh.rotation.z = Math.PI / 2;
+    halfL.position.x = -5;
+    halfL.rotation.z = Math.PI / 2;
+    g.add(halfL);
+    const halfR = new T.Mesh(
+      new T.CapsuleGeometry(7, 10, 6, 8),
+      new T.MeshStandardMaterial({ color: 0xffffff, emissive: 0xffcc00, emissiveIntensity: 0.2, metalness: 0.3, roughness: 0.4 })
+    );
+    halfR.position.x = 5;
+    halfR.rotation.z = Math.PI / 2;
+    g.add(halfR);
+    // Rx cross on surface
+    const crossMat = new T.MeshStandardMaterial({ color: 0xff6600, emissive: 0xff6600, emissiveIntensity: 0.6 });
+    const cv = new T.Mesh(new T.BoxGeometry(1.5, 10, 1.5), crossMat);
+    g.add(cv);
+    const ch = new T.Mesh(new T.BoxGeometry(8, 1.5, 1.5), crossMat);
+    ch.position.y = 2;
+    g.add(ch);
+    g.position.y = 13;
+    mesh = g;
+
   } else if (ctor === "DoubleBlindCloud") {
-    mesh = new T.Mesh(
-      new T.SphereGeometry(Math.max(18, hazard.r * 0.45), 16, 10),
-      new T.MeshStandardMaterial({ color: 0xbd57ff, emissive: 0xbd57ff, emissiveIntensity: 0.5, transparent: true, opacity: 0.32 })
+    // Clinical trial double-blind fog (layered translucent spheres with "?" inside)
+    const g = new T.Group();
+    for (let i = 0; i < 5; i++) {
+      const r = Math.max(14, (hazard.r || 48) * (0.25 + i * 0.1));
+      const s = new T.Mesh(
+        new T.SphereGeometry(r, 12, 8),
+        new T.MeshStandardMaterial({ color: 0xbd57ff, emissive: 0xbd57ff, emissiveIntensity: 0.4 - i * 0.05, transparent: true, opacity: 0.12 + i * 0.04 })
+      );
+      s.position.set(Math.sin(i * 1.3) * 8, i * 3, Math.cos(i * 1.3) * 8);
+      g.add(s);
+    }
+    const core = new T.Mesh(
+      new T.IcosahedronGeometry(8),
+      new T.MeshStandardMaterial({ color: 0xffffff, emissive: 0xbd57ff, emissiveIntensity: 1.0, wireframe: true, transparent: true, opacity: 0.5 })
     );
-    mesh.position.y = 22;
+    g.add(core);
+    const light = new T.PointLight(0xbd57ff, 0.6, 100);
+    g.add(light);
+    g.position.y = 18;
+    mesh = g;
+
   } else if (ctor === "RegulatoryProjectile") {
-    mesh = new T.Mesh(
-      new T.OctahedronGeometry(hazard.enraged ? 18 : 14),
-      new T.MeshStandardMaterial({ color: hazard.enraged ? 0xff7a18 : 0xff3366, emissive: hazard.enraged ? 0xff7a18 : 0xff3366, emissiveIntensity: 0.85 })
+    // Regulatory audit stamp projectile (spinning paragraph symbol)
+    const g = new T.Group();
+    const enraged = hazard.enraged;
+    const col = enraged ? 0xff7a18 : 0xff3366;
+    const diamond = new T.Mesh(
+      new T.OctahedronGeometry(enraged ? 18 : 14),
+      new T.MeshStandardMaterial({ color: col, emissive: col, emissiveIntensity: 0.85, transparent: true, opacity: 0.75 })
     );
-    mesh.position.y = 18;
+    g.add(diamond);
+    const wireframe = new T.Mesh(
+      new T.OctahedronGeometry(enraged ? 22 : 17),
+      new T.MeshStandardMaterial({ color: col, emissive: col, emissiveIntensity: 0.5, wireframe: true, transparent: true, opacity: 0.4 })
+    );
+    g.add(wireframe);
+    const trail = new T.PointLight(col, enraged ? 0.8 : 0.5, enraged ? 100 : 60);
+    g.add(trail);
+    g.position.y = 16;
+    mesh = g;
+
   } else if (ctor === "DossierProjectile") {
-    const docGroup = new T.Group();
-    const page = new T.Mesh(
-      new T.BoxGeometry(16, 20, 2),
-      new T.MeshStandardMaterial({ color: 0x57f2ff, emissive: 0x57f2ff, emissiveIntensity: 0.7, transparent: true, opacity: 0.85 })
+    // Clinical dossier: folder with pages and tab
+    const g = new T.Group();
+    const folder = new T.Mesh(
+      new T.BoxGeometry(18, 22, 3),
+      new T.MeshStandardMaterial({ color: 0x57f2ff, emissive: 0x57f2ff, emissiveIntensity: 0.5, transparent: true, opacity: 0.85 })
     );
-    docGroup.add(page);
-    const fold = new T.Mesh(
-      new T.BoxGeometry(6, 6, 3),
-      new T.MeshStandardMaterial({ color: 0x3ad0ee, emissive: 0x57f2ff, emissiveIntensity: 0.4 })
+    g.add(folder);
+    // Tab
+    const tab = new T.Mesh(
+      new T.BoxGeometry(8, 4, 3.5),
+      new T.MeshStandardMaterial({ color: 0x3ad0ee, emissive: 0x57f2ff, emissiveIntensity: 0.7 })
     );
-    fold.position.set(-5, 7, 1);
-    docGroup.add(fold);
-    docGroup.position.y = 14;
-    mesh = docGroup;
+    tab.position.set(-5, 11, 0);
+    g.add(tab);
+    // Page lines
+    const lineMat = new T.MeshStandardMaterial({ color: 0xffffff, emissive: 0xffffff, emissiveIntensity: 0.3 });
+    for (let i = 0; i < 4; i++) {
+      const line = new T.Mesh(new T.BoxGeometry(12, 0.8, 0.5), lineMat);
+      line.position.set(0, 5 - i * 4, 1.8);
+      g.add(line);
+    }
+    const trail = new T.PointLight(0x57f2ff, 0.4, 50);
+    g.add(trail);
+    g.position.y = 14;
+    mesh = g;
+
   } else {
-    mesh = new T.Mesh(
-      new T.BoxGeometry(20, 6, 26),
-      new T.MeshStandardMaterial({ color: 0x57f2ff, emissive: 0x57f2ff, emissiveIntensity: 0.5, transparent: true, opacity: 0.8 })
+    // Generic hazard: glowing warning box
+    const g = new T.Group();
+    const box = new T.Mesh(
+      new T.BoxGeometry(20, 20, 20),
+      new T.MeshStandardMaterial({ color: 0x57f2ff, emissive: 0x57f2ff, emissiveIntensity: 0.5, transparent: true, opacity: 0.65, wireframe: true })
     );
-    mesh.position.y = 12;
+    g.add(box);
+    const inner = new T.Mesh(
+      new T.BoxGeometry(12, 12, 12),
+      new T.MeshStandardMaterial({ color: 0x57f2ff, emissive: 0x57f2ff, emissiveIntensity: 0.8, transparent: true, opacity: 0.5 })
+    );
+    g.add(inner);
+    g.position.y = 12;
+    mesh = g;
   }
+
   mesh._hazardRef = hazard;
   return mesh;
 }
@@ -11062,8 +11194,8 @@ function sync3DScene(time) {
 
   THREE_STATE.boostPadMeshes.forEach(m => {
     const pulse = 0.55 + 0.35 * Math.sin(time * 0.01 + m.position.x * 0.01);
-    if (m.material) m.material.emissiveIntensity = pulse;
-    m.position.y = 2 + pulse * 0.8;
+    if (m._padMat) m._padMat.emissiveIntensity = 0.4 + 0.4 * pulse;
+    m.position.y = 1.5 + pulse * 0.5;
   });
 
   THREE_STATE.movingObjectMeshes.forEach(m => {
