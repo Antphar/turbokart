@@ -6994,19 +6994,27 @@ class AIKart extends Kart {
 
   update(dt, track, allKarts) {
     if (this.eliminated) return;
+    const isOpen = !!track.isOpen;
+
     // Safeguard: Ensure aiTargetIdx is never behind nextCheckpoint
-    const diffCheck = (this.nextCheckpoint - this.aiTargetIdx + track.n) % track.n;
-    if (diffCheck !== 0 && diffCheck !== track.n - 1) {
-      this.aiTargetIdx = this.nextCheckpoint;
+    if (isOpen) {
+      if (this.aiTargetIdx < this.nextCheckpoint) this.aiTargetIdx = this.nextCheckpoint;
+      this.aiTargetIdx = Math.min(this.aiTargetIdx, track.n - 1);
+    } else {
+      const diffCheck = (this.nextCheckpoint - this.aiTargetIdx + track.n) % track.n;
+      if (diffCheck !== 0 && diffCheck !== track.n - 1) {
+        this.aiTargetIdx = this.nextCheckpoint;
+      }
     }
 
     // Pick target on next waypoint with look-ahead
     const target = track.waypoints[this.aiTargetIdx];
-    const nextIdx = (this.aiTargetIdx + 1) % track.n;
+    const nextIdx = isOpen ? Math.min(this.aiTargetIdx + 1, track.n - 1) : (this.aiTargetIdx + 1) % track.n;
     const next = track.waypoints[nextIdx];
 
     // Lateral offset along the segment normal for varied racing line
-    const seg = track.segments[(this.aiTargetIdx - 1 + track.n) % track.n];
+    const segIdx = isOpen ? Math.max(0, this.aiTargetIdx - 1) : (this.aiTargetIdx - 1 + track.n) % track.n;
+    const seg = track.segments[Math.min(segIdx, track.segments.length - 1)];
     const segHalfW = seg.halfW;
     const lookAheadBlend = clamp(segHalfW / 120, 0.10, 0.35);
     let aimX = lerp(target.x, next.x, lookAheadBlend) + seg.nx * (this.lateralOffset * (segHalfW * 0.45));
@@ -7190,7 +7198,11 @@ class AIKart extends Kart {
       leadHumanProgress = Math.max(leadHumanProgress, progressValue(game.player2));
     }
     const myProgress = progressValue(this);
-    const diffProgress = leadHumanProgress - myProgress;
+    let diffProgress = leadHumanProgress - myProgress;
+
+    if (isOpen) {
+      diffProgress = clamp(diffProgress / 200, -5, 5);
+    }
 
     let rubberbandSpeedMult = 1.0;
     if (diffProgress > 0) {
@@ -7276,7 +7288,11 @@ class AIKart extends Kart {
     // Advance waypoint when close — adaptive radius based on road width
     const advanceRadius = Math.max(55, segHalfW * 1.4);
     if (dist(this.x, this.y, target.x, target.y) < advanceRadius) {
-      this.aiTargetIdx = (this.aiTargetIdx + 1) % track.n;
+      if (isOpen) {
+        this.aiTargetIdx = Math.min(this.aiTargetIdx + 1, track.n - 1);
+      } else {
+        this.aiTargetIdx = (this.aiTargetIdx + 1) % track.n;
+      }
       this.lateralOffset = rand(-0.5, 0.5);
     }
   }
@@ -8204,12 +8220,7 @@ function finishRace() {
 function progressValue(k) {
   if (!k) return 0;
   if (game.track.isOpen) {
-    const seg = game.track.segments[Math.min(k.nextCheckpoint, game.track.segments.length - 1)];
-    const prev = game.track.waypoints[Math.max(0, k.nextCheckpoint - 1)];
-    const target = game.track.waypoints[Math.min(k.nextCheckpoint, game.track.n - 1)];
-    if (!seg || !prev || !target) return k.nextCheckpoint;
-    const proj = pointSegProjection(k.x, k.y, prev.x, prev.y, target.x, target.y);
-    return k.lap * 100000 + k.nextCheckpoint + clamp(proj.t, 0, 1);
+    return k.x;
   }
   const seg = game.track.segments[(k.nextCheckpoint - 1 + game.track.n) % game.track.n];
   const target = game.track.waypoints[k.nextCheckpoint];
@@ -9770,30 +9781,45 @@ function drawHUD(time) {
     ctx.font = "11px sans-serif";
     ctx.textAlign = "left"; ctx.textBaseline = "top";
     if (isDragonEscape()) {
-      ctx.fillText("DIST", 18, 14);
+      ctx.fillText("DISTANCE", 18, 14);
       ctx.fillStyle = "#fff";
-      ctx.font = "bold 24px 'SFMono-Regular', Consolas, monospace";
-      ctx.fillText(`${(game.player.lap * game.track.n + game.player.checkpointsThisLap) * 0.1}km`, 18, 28);
+      ctx.font = "bold 22px 'SFMono-Regular', Consolas, monospace";
+      const distKm = (game.player.x / 1000).toFixed(1);
+      ctx.fillText(`${distKm} km`, 18, 28);
+
+      ctx.fillStyle = "#a8acd0";
+      ctx.font = "11px sans-serif";
+      ctx.fillText("SURVIVAL", 130, 14);
+      ctx.fillStyle = "#fff";
+      ctx.font = "bold 22px 'SFMono-Regular', Consolas, monospace";
+      ctx.fillText(formatTime(game.raceTime), 130, 32);
+
+      ctx.fillStyle = "#a8acd0";
+      ctx.font = "11px sans-serif";
+      ctx.fillText("POSITION", 18, 64);
+      ctx.fillStyle = positionColor(game.hudPosition);
+      ctx.font = "bold 22px sans-serif";
+      ctx.fillText(`${ordinal(game.hudPosition)} / ${game.totalRacers}`, 18, 78);
     } else {
       ctx.fillText("LAP", 18, 14);
       ctx.fillStyle = "#fff";
       ctx.font = "bold 28px sans-serif";
       ctx.fillText(`${Math.min(game.player.lap + 1, TOTAL_LAPS)} / ${TOTAL_LAPS}`, 18, 28);
+
+      ctx.fillStyle = "#a8acd0";
+      ctx.font = "11px sans-serif";
+      ctx.fillText("TIME", 130, 14);
+      ctx.fillStyle = "#fff";
+      ctx.font = "bold 22px 'SFMono-Regular', Consolas, monospace";
+      ctx.fillText(formatTime(game.raceTime), 130, 32);
+
+      ctx.fillStyle = "#a8acd0";
+      ctx.font = "11px sans-serif";
+      ctx.fillText("POSITION", 18, 64);
+      ctx.fillStyle = positionColor(game.hudPosition);
+      ctx.font = "bold 22px sans-serif";
+      ctx.fillText(`${ordinal(game.hudPosition)} / ${game.totalRacers}`, 18, 78);
     }
-
-    ctx.fillStyle = "#a8acd0";
-    ctx.font = "11px sans-serif";
-    ctx.fillText("TIME", 130, 14);
-    ctx.fillStyle = "#fff";
-    ctx.font = "bold 22px 'SFMono-Regular', Consolas, monospace";
-    ctx.fillText(formatTime(game.raceTime), 130, 32);
-
-    ctx.fillStyle = "#a8acd0";
-    ctx.font = "11px sans-serif";
-    ctx.fillText("POSITION", 18, 64);
-    ctx.fillStyle = positionColor(game.hudPosition);
-    ctx.font = "bold 22px sans-serif";
-    ctx.fillText(`${ordinal(game.hudPosition)} / ${game.totalRacers}`, 18, 78);
   });
 
   // Top-right: Coins / Item Roulette slot
@@ -10195,7 +10221,7 @@ function drawHUDMultiplayer(time) {
     ctx.font = "10px sans-serif";
     ctx.textAlign = "left"; ctx.textBaseline = "top";
 
-    if (isDragonEscape()) { ctx.fillText("DIST", 12, 10); ctx.fillStyle = "#fff"; ctx.font = "bold 18px 'SFMono-Regular', Consolas, monospace"; ctx.fillText(`${((game.player.lap * game.track.n + game.player.checkpointsThisLap) * 0.1)}km`, 12, 22); }
+    if (isDragonEscape()) { ctx.fillText("DIST", 12, 10); ctx.fillStyle = "#fff"; ctx.font = "bold 18px 'SFMono-Regular', Consolas, monospace"; ctx.fillText(`${(game.player.x / 1000).toFixed(1)}km`, 12, 22); }
     else { ctx.fillText("LAP", 12, 10); ctx.fillStyle = "#fff"; ctx.font = "bold 20px sans-serif"; ctx.fillText(`${Math.min(game.player.lap + 1, TOTAL_LAPS)} / ${TOTAL_LAPS}`, 12, 22); }
 
     ctx.fillStyle = "#a8acd0";
@@ -10226,7 +10252,7 @@ function drawHUDMultiplayer(time) {
     ctx.font = "10px sans-serif";
     ctx.textAlign = "left"; ctx.textBaseline = "top";
 
-    if (isDragonEscape()) { ctx.fillText("DIST", 12, 10); ctx.fillStyle = "#fff"; ctx.font = "bold 18px 'SFMono-Regular', Consolas, monospace"; ctx.fillText(`${((game.player2.lap * game.track.n + game.player2.checkpointsThisLap) * 0.1)}km`, 12, 22); }
+    if (isDragonEscape()) { ctx.fillText("DIST", 12, 10); ctx.fillStyle = "#fff"; ctx.font = "bold 18px 'SFMono-Regular', Consolas, monospace"; ctx.fillText(`${(game.player2.x / 1000).toFixed(1)}km`, 12, 22); }
     else { ctx.fillText("LAP", 12, 10); ctx.fillStyle = "#fff"; ctx.font = "bold 20px sans-serif"; ctx.fillText(`${Math.min(game.player2.lap + 1, TOTAL_LAPS)} / ${TOTAL_LAPS}`, 12, 22); }
 
     ctx.fillStyle = "#a8acd0";
@@ -10565,8 +10591,8 @@ function showFinishScreen() {
       const p2Time = (game.player2.finishTime || game.raceTime).toFixed(1);
       const p1Lap = game.player.lap;
       const p2Lap = game.player2.lap;
-      const p1Dist = ((game.player.lap * game.track.n + game.player.checkpointsThisLap) * 0.1).toFixed(1);
-      const p2Dist = ((game.player2.lap * game.track.n + game.player2.checkpointsThisLap) * 0.1).toFixed(1);
+      const p1Dist = (game.player.x / 1000).toFixed(1);
+      const p2Dist = (game.player2.x / 1000).toFixed(1);
 
       let winnerName = "";
       if (p1Lap > p2Lap) winnerName = "P1 " + game.player.name + " Outran the Dragon!";
@@ -10666,7 +10692,7 @@ function showFinishScreen() {
     const isDragon = isDragonEscape();
 
     if (isDragon) {
-      const bestDist = ((game.player.lap * game.track.n + game.player.checkpointsThisLap) * 0.1).toFixed(1);
+      const bestDist = (game.player.x / 1000).toFixed(1);
       finishTitle.textContent = "Dragon's Wrath!";
       finishTitle.style.background = "linear-gradient(90deg, #ff4d4d, #ff8a00)";
       finishTitle.style.webkitBackgroundClip = "text";
@@ -10677,7 +10703,7 @@ function showFinishScreen() {
       html += `<div class="row"><span class="label">Distance Escaped</span><span class="value">${bestDist} km</span></div>`;
       html += `<div class="row"><span class="label">Laps Survived</span><span class="value">${game.player.lap}</span></div>`;
       html += `<div class="row"><span class="label">Citations Collected</span><span class="value">${game.player.coinsCollected}</span></div>`;
-      const dragonScore = Math.floor(game.player.lap * 500 + game.player.coinsCollected * 15 + game.player.finishTime * 10);
+      const dragonScore = Math.floor(game.player.x / 10 + game.player.coinsCollected * 15 + (game.player.finishTime || game.raceTime) * 10);
       html += `<div class="row"><span class="label">Score</span><span class="value">${dragonScore}</span></div>`;
 
       // Full ranking (just human and how long they survived)
