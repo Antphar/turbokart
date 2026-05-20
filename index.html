@@ -7089,9 +7089,21 @@ function checkProgress(kart) {
 
   if (target && dist(kart.x, kart.y, target.x, target.y) < CHECKPOINT_RADIUS) {
     hitCheckpoint = true;
-  } else {
+  } else if (open) {
+    // For open trails, use segment proximity as fallback (no finish line concern)
     const cs = game.track.closestSegment(kart.x, kart.y);
-    if (cs.dist < 260 && cs.idx === kart.nextCheckpoint) {
+    if (cs.dist < 200 && cs.idx === kart.nextCheckpoint) {
+      hitCheckpoint = true;
+    }
+  }
+
+  // For closed circuits, only count the finish-line checkpoint (wrapping to 0)
+  // if the kart actually crosses the start/finish segment geometry
+  const isFinishCheckpoint = !open && kart.nextCheckpoint === game.track.n - 1 &&
+    kart.checkpointsThisLap >= game.track.n - 2;
+  if (!hitCheckpoint && !open && !isFinishCheckpoint) {
+    const cs = game.track.closestSegment(kart.x, kart.y);
+    if (cs.dist < 180 && cs.idx === kart.nextCheckpoint) {
       hitCheckpoint = true;
     }
   }
@@ -7585,19 +7597,14 @@ function update(dt, time) {
                   vx: rand(-0.5, 0.5), vy: -1.2, life: 75, maxLife: 75, size: 18, color: "#57f2ff", drag: 0.98
                 });
                 triggerQuote(kart, "boost");
-              } else if (h instanceof DragonFire && isDragonEscape() && kart.isPlayer) {
-                // One hit = dead (infinite survival)
-                kart.finished = true; kart.finishTime = (performance.now() - game.startTime) / 1000;
-                if (!game.finishOrder.includes(kart)) game.finishOrder.push(kart);
-                Sound.crash(); game.shake = Math.max(game.shake, 14);
-                game.particles.burst(h.x, h.y, "#ff2200", 40, { type: "spark", spdMin: 2, spdMax: 8 });
-                game.particles.add({ type: "text", text: "GOT THE HANDS!", x: h.x, y: h.y - 30,
-                  vx: 0, vy: -1.5, life: 90, maxLife: 90, size: 26, color: "#ff1a1a", drag: 0.97 });
-                triggerQuote(kart, "crash");
-                let allHumanFinished = true;
-                if (game.player && !game.player.finished) allHumanFinished = false;
-                if (game.multiplayer && game.player2 && !game.player2.finished) allHumanFinished = false;
-                if (allHumanFinished) setTimeout(() => finishRace(), 1800);
+              } else if (h instanceof DragonFire && isDragonEscape()) {
+                if (kart.shieldTimer > 0) {
+                  kart.shieldTimer = 0;
+                  game.particles.burst(kart.x, kart.y, "#78dcff", 18, { type: "spark", spdMin: 1.5, spdMax: 4 });
+                } else {
+                  eliminateKart(kart, "GOT THE HANDS!", h.x, h.y, "#ff1a1a");
+                  game.particles.burst(h.x, h.y, "#ff2200", 40, { type: "spark", spdMin: 2, spdMax: 8 });
+                }
               } else {
                 kart.spinoutTimer = TUNING.SPINOUT_TIME; kart.spinAngle = 0; kart.vx = 0; kart.vy = 0;
                 if (kart.isPlayer) { Sound.crash(); game.shake = Math.max(game.shake, 8); }
