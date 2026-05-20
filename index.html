@@ -724,7 +724,11 @@
     opacity: 0;
   }
   .audio-icon {
-    font-size: 24px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 32px;
+    height: 32px;
     animation: bounce 1.2s infinite alternate ease-in-out;
   }
   .audio-info {
@@ -763,7 +767,7 @@
 
   <!-- Audio Notification Toast -->
   <div id="audio-toast" class="audio-toast hidden">
-    <div class="audio-icon" id="audio-toast-icon">🎵</div>
+    <div class="audio-icon" id="audio-toast-icon"><svg width="24" height="24" viewBox="0 0 24 24" fill="none"><rect x="4" y="2" width="3" height="20" rx="1" fill="#57f2ff"/><rect x="10" y="6" width="3" height="12" rx="1" fill="#a4ff80"/><rect x="16" y="4" width="3" height="16" rx="1" fill="#7b75ff"/></svg></div>
     <div class="audio-info">
       <div class="audio-now-playing" id="audio-toast-label">NOW PLAYING</div>
       <div id="audio-track-title" class="audio-track-title">Mainframe Sunset</div>
@@ -978,8 +982,8 @@ const TUNING = {
   REVERSE_MAX: 2.4,
   GRIP_NORMAL: 0.18,
   GRIP_DRIFT: 0.045,
-  GRIP_NORMAL_ANTON: 0.12,
-  GRIP_DRIFT_ANTON: 0.030,
+  GRIP_NORMAL_ANTON: 0.14,
+  GRIP_DRIFT_ANTON: 0.035,
   OFF_ROAD_SPEED_MULT: 0.65,
 
   // Spatial audio
@@ -1007,12 +1011,12 @@ const CHARACTERS = [
     color: "#ff4d6d",
     colorGlow: "rgba(255, 77, 109, 0.4)",
     gradient: "linear-gradient(135deg, #ff4d6d, #ff85a2)",
-    stats: { speed: 85, accel: 90, handling: 40, weight: 40 },
-    maxSpeed: 7.2,
-    acceleration: 0.150,
-    turnSpeed: 0.040,
+    stats: { speed: 88, accel: 82, handling: 35, weight: 30 },
+    maxSpeed: 6.9,
+    acceleration: 0.145,
+    turnSpeed: 0.042,
     weight: 18,
-    passive: "<strong>Worst Speller</strong>: Supreme speed and acceleration, but slides around corners. Types typos above his kart when crashing!"
+    passive: "<strong>Worst Speller</strong>: Supreme speed but slides around corners. Types typos above his kart when crashing!"
   },
   {
     id: "artur",
@@ -1022,9 +1026,9 @@ const CHARACTERS = [
     color: "#ff8a3b",
     colorGlow: "rgba(255, 138, 59, 0.4)",
     gradient: "linear-gradient(135deg, #ff8a3b, #ffd86b)",
-    stats: { speed: 65, accel: 65, handling: 60, weight: 55 },
-    maxSpeed: 6.6,
-    acceleration: 0.130,
+    stats: { speed: 68, accel: 72, handling: 62, weight: 55 },
+    maxSpeed: 6.7,
+    acceleration: 0.138,
     turnSpeed: 0.050,
     weight: 22,
     passive: "<strong>Prayer-Driven</strong>: Gains a 1.8x multiplier to mini-turbo charges when running in 3rd or 4th place. Highly vocal!"
@@ -1037,8 +1041,8 @@ const CHARACTERS = [
     color: "#4dffaa",
     colorGlow: "rgba(77, 255, 170, 0.4)",
     gradient: "linear-gradient(135deg, #4dffaa, #33ccff)",
-    stats: { speed: 72, accel: 75, handling: 65, weight: 60 },
-    maxSpeed: 6.8,
+    stats: { speed: 72, accel: 74, handling: 68, weight: 58 },
+    maxSpeed: 6.75,
     acceleration: 0.140,
     turnSpeed: 0.052,
     weight: 24,
@@ -1052,11 +1056,11 @@ const CHARACTERS = [
     color: "#9d4dff",
     colorGlow: "rgba(157, 77, 255, 0.4)",
     gradient: "linear-gradient(135deg, #9d4dff, #57f2ff)",
-    stats: { speed: 55, accel: 55, handling: 90, weight: 90 },
-    maxSpeed: 6.4,
-    acceleration: 0.120,
-    turnSpeed: 0.065,
-    weight: 35,
+    stats: { speed: 58, accel: 60, handling: 88, weight: 88 },
+    maxSpeed: 6.55,
+    acceleration: 0.128,
+    turnSpeed: 0.062,
+    weight: 32,
     passive: "<strong>Quiet Savage</strong>: Incredible weight and handling stability. Ramming other karts knocks them back with 2.5x force."
   },
   {
@@ -2689,42 +2693,42 @@ const Sound = {
     {
       name: "Systematic Review",
       tempo: 124,
-      icon: "📋",
+      icon: "SR",
       color: "#57f2ff",
       style: "Synthwave Cruise"
     },
     {
       name: "Adverse Event Report",
       tempo: 128,
-      icon: "⚠️",
+      icon: "AE",
       color: "#ff4d6d",
       style: "Acid Sprint"
     },
     {
       name: "Protocol Amendment",
       tempo: 118,
-      icon: "📝",
+      icon: "PA",
       color: "#a4ff80",
       style: "Chiptune Flow"
     },
     {
       name: "Phase III Approval",
       tempo: 128,
-      icon: "💊",
+      icon: "P3",
       color: "#b983ff",
       style: "Heavy Modern Banger"
     },
     {
       name: "Post-Market Surveillance",
       tempo: 85,
-      icon: "🔬",
+      icon: "PM",
       color: "#ff6b35",
       style: "Dirty Downtempo"
     },
     {
       name: "Regulatory Submission",
       tempo: 136,
-      icon: "📂",
+      icon: "RS",
       color: "#39ff14",
       style: "Minimal Techno"
     }
@@ -2742,7 +2746,7 @@ const Sound = {
     const t = this.tracks[this.trackIdx || 0] || this.tracks[0];
     title.innerText = t.name;
     tempo.innerText = this.tempo + " BPM" + (this.tempo > t.tempo ? " (FINAL LAP!)" : "");
-    if (icon) icon.innerText = t.icon;
+    if (icon) icon.innerHTML = `<svg width="24" height="24" viewBox="0 0 24 24" fill="none"><rect x="4" y="2" width="3" height="20" rx="1" fill="${t.color}"/><rect x="10" y="6" width="3" height="12" rx="1" fill="${t.color}" opacity="0.7"/><rect x="16" y="4" width="3" height="16" rx="1" fill="${t.color}" opacity="0.85"/></svg>`;
     toast.style.borderColor = t.color;
     toast.style.boxShadow = `0 8px 32px ${hexToRgba(t.color, 0.25)}`;
 
@@ -6755,6 +6759,77 @@ class Kart {
     ctx.fillStyle = this._darken(this.color, 0.55);
     ctx.fillRect(-15, -9, 3, 18);
 
+    // Character-specific kart decorations
+    if (this.charId === "anton") {
+      // Antenna with bobbing tip
+      ctx.strokeStyle = "#aaa";
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.moveTo(-8, -10);
+      ctx.lineTo(-12, -18);
+      ctx.stroke();
+      ctx.fillStyle = "#ff4d6d";
+      ctx.beginPath();
+      ctx.arc(-12, -18, 2, 0, TAU);
+      ctx.fill();
+      // Speed stripe on hood
+      ctx.fillStyle = "rgba(255,77,109,0.5)";
+      ctx.fillRect(4, -2, 8, 1);
+      ctx.fillRect(4, 1, 8, 1);
+    } else if (this.charId === "artur") {
+      // Flame decals on sides
+      ctx.fillStyle = "rgba(255,138,59,0.6)";
+      ctx.beginPath();
+      ctx.moveTo(-10, -10);
+      ctx.lineTo(2, -8);
+      ctx.lineTo(-4, -6);
+      ctx.closePath();
+      ctx.fill();
+      ctx.beginPath();
+      ctx.moveTo(-10, 10);
+      ctx.lineTo(2, 8);
+      ctx.lineTo(-4, 6);
+      ctx.closePath();
+      ctx.fill();
+      // Roof scoop
+      ctx.fillStyle = this._darken(this.color, 0.3);
+      ctx.fillRect(-4, -4, 5, 8);
+    } else if (this.charId === "rissal") {
+      // Neon underglow line
+      ctx.shadowBlur = 6;
+      ctx.shadowColor = "#4dffaa";
+      ctx.strokeStyle = "rgba(77,255,170,0.7)";
+      ctx.lineWidth = 1.5;
+      ctx.beginPath();
+      ctx.moveTo(-14, -11);
+      ctx.lineTo(14, -11);
+      ctx.moveTo(-14, 11);
+      ctx.lineTo(14, 11);
+      ctx.stroke();
+      ctx.shadowBlur = 0;
+    } else if (this.charId === "pia") {
+      // Wider bumper bars (tank look)
+      ctx.fillStyle = this._darken(this.color, 0.4);
+      ctx.fillRect(-16, -12, 32, 2);
+      ctx.fillRect(-16, 10, 32, 2);
+      // Reinforced front
+      ctx.fillStyle = "#9d4dff";
+      ctx.fillRect(14, -9, 2, 18);
+    } else if (this.charId === "florian") {
+      // Executive racing stripe (center)
+      ctx.fillStyle = "rgba(164,255,128,0.45)";
+      ctx.fillRect(-14, -1, 28, 2);
+      // Regulatory badge (small diamond on hood)
+      ctx.fillStyle = "#57f2ff";
+      ctx.beginPath();
+      ctx.moveTo(8, 0);
+      ctx.lineTo(6, -2);
+      ctx.lineTo(4, 0);
+      ctx.lineTo(6, 2);
+      ctx.closePath();
+      ctx.fill();
+    }
+
     // Ultimate ready glow
     if (this.ultReady) {
       const pulse = 0.4 + 0.4 * Math.sin(time * 0.015);
@@ -7554,6 +7629,27 @@ function drawItemNamePopup(ctx, x, y, kart, time) {
   ctx.restore();
 }
 
+function getCharAvatarSVG(char) {
+  const s = 48;
+  const c = char.color;
+  if (char.id === "anton") {
+    return `<svg width="${s}" height="${s}" viewBox="0 0 48 48"><rect x="14" y="8" width="20" height="16" rx="4" fill="${c}"/><rect x="17" y="12" width="5" height="4" rx="1" fill="#050510"/><rect x="26" y="12" width="5" height="4" rx="1" fill="#050510"/><rect x="20" y="18" width="8" height="3" rx="1" fill="#050510"/><rect x="10" y="28" width="28" height="14" rx="3" fill="${c}" opacity="0.7"/><rect x="16" y="30" width="16" height="3" rx="1" fill="#050510" opacity="0.5"/><rect x="18" y="35" width="12" height="2" rx="1" fill="#050510" opacity="0.4"/><line x1="24" y1="4" x2="24" y2="8" stroke="#aaa" stroke-width="2"/><circle cx="24" cy="4" r="2" fill="${c}"/></svg>`;
+  }
+  if (char.id === "artur") {
+    return `<svg width="${s}" height="${s}" viewBox="0 0 48 48"><rect x="14" y="10" width="20" height="16" rx="4" fill="${c}"/><rect x="17" y="14" width="5" height="4" rx="1" fill="#050510"/><rect x="26" y="14" width="5" height="4" rx="1" fill="#050510"/><path d="M20 22 L24 25 L28 22" stroke="#050510" stroke-width="2" fill="none" stroke-linecap="round"/><polygon points="16,8 24,2 32,8" fill="${c}" opacity="0.6"/><rect x="10" y="30" width="28" height="12" rx="3" fill="${c}" opacity="0.7"/><polygon points="12,42 16,36 20,42" fill="${c}" opacity="0.4"/><polygon points="28,42 32,36 36,42" fill="${c}" opacity="0.4"/></svg>`;
+  }
+  if (char.id === "rissal") {
+    return `<svg width="${s}" height="${s}" viewBox="0 0 48 48"><rect x="14" y="10" width="20" height="16" rx="4" fill="${c}"/><circle cx="20" cy="17" r="3" fill="#050510"/><circle cx="28" cy="17" r="3" fill="#050510"/><circle cx="20" cy="16" r="1.5" fill="#fff"/><circle cx="28" cy="16" r="1.5" fill="#fff"/><ellipse cx="24" cy="23" rx="4" ry="2" fill="#050510" opacity="0.6"/><rect x="10" y="30" width="28" height="12" rx="3" fill="${c}" opacity="0.7"/><line x1="8" y1="30" x2="8" y2="42" stroke="${c}" stroke-width="2" opacity="0.5"/><line x1="40" y1="30" x2="40" y2="42" stroke="${c}" stroke-width="2" opacity="0.5"/></svg>`;
+  }
+  if (char.id === "pia") {
+    return `<svg width="${s}" height="${s}" viewBox="0 0 48 48"><rect x="12" y="10" width="24" height="16" rx="3" fill="${c}"/><rect x="17" y="14" width="4" height="4" rx="1" fill="#050510"/><rect x="27" y="14" width="4" height="4" rx="1" fill="#050510"/><line x1="19" y1="22" x2="29" y2="22" stroke="#050510" stroke-width="2" stroke-linecap="round"/><rect x="8" y="30" width="32" height="14" rx="3" fill="${c}" opacity="0.7"/><rect x="8" y="30" width="32" height="3" rx="1" fill="${c}" opacity="0.9"/><rect x="8" y="41" width="32" height="3" rx="1" fill="${c}" opacity="0.9"/></svg>`;
+  }
+  if (char.id === "florian") {
+    return `<svg width="${s}" height="${s}" viewBox="0 0 48 48"><rect x="14" y="8" width="20" height="18" rx="4" fill="${c}"/><rect x="17" y="13" width="5" height="4" rx="1" fill="#050510"/><rect x="26" y="13" width="5" height="4" rx="1" fill="#050510"/><path d="M19 21 Q24 25 29 21" stroke="#050510" stroke-width="2" fill="none" stroke-linecap="round"/><rect x="10" y="30" width="28" height="12" rx="3" fill="${c}" opacity="0.7"/><rect x="18" y="32" width="12" height="8" rx="2" fill="#050510" opacity="0.3"/><polygon points="24,3 20,8 28,8" fill="${c}" opacity="0.5"/></svg>`;
+  }
+  return `<span style="font-weight:900;font-size:20px;">${char.initials}</span>`;
+}
+
 function renderSelectScreen() {
   const container = document.getElementById("cards-container");
   container.innerHTML = "";
@@ -7577,7 +7673,7 @@ function renderSelectScreen() {
     }
 
     card.innerHTML = `
-      <div class="char-avatar">${char.initials}</div>
+      <div class="char-avatar">${getCharAvatarSVG(char)}</div>
       <div class="char-name">${char.name}</div>
       <div class="char-tag">${char.tagline}</div>
       <div class="char-stats">
@@ -10769,7 +10865,7 @@ function renderMusicSettings() {
     card.type = "button";
     card.className = "music-card" + (Sound.trackIdx === idx ? " selected" : "");
     card.innerHTML = `
-      <div class="music-card-title"><span>${track.icon}</span><span>${track.name}</span></div>
+      <div class="music-card-title"><span style="display:inline-flex;align-items:center;justify-content:center;width:26px;height:26px;border-radius:6px;background:${track.color}22;border:1px solid ${track.color}55;color:${track.color};font-size:10px;font-weight:900;letter-spacing:0.5px;font-family:monospace;">${track.icon}</span><span>${track.name}</span></div>
       <div class="music-card-meta">${track.tempo} BPM · ${track.style}</div>
     `;
     card.addEventListener("click", () => {
