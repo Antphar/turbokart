@@ -10481,12 +10481,12 @@ function rebuild3DTrack() {
   // Build kart models for all active karts
   buildAllKartModels();
 
-  // Item boxes (neon hypercube with inner diamond and question mark)
+  // Item boxes (large neon hypercube with inner diamond)
   if (game.track.itemBoxes) {
     game.track.itemBoxes.forEach(ib => {
       const boxGroup = new T.Group();
-      // Outer wireframe cube
-      const outerGeo = new T.BoxGeometry(18, 18, 18);
+      // Outer wireframe cube (2x bigger)
+      const outerGeo = new T.BoxGeometry(36, 36, 36);
       const outerMat = new T.MeshStandardMaterial({
         color: 0xffd86b,
         emissive: 0xffd86b,
@@ -10496,8 +10496,8 @@ function rebuild3DTrack() {
         wireframe: true,
       });
       boxGroup.add(new T.Mesh(outerGeo, outerMat));
-      // Inner solid diamond (rotated cube)
-      const innerGeo = new T.OctahedronGeometry(8);
+      // Inner solid diamond (2x bigger)
+      const innerGeo = new T.OctahedronGeometry(16);
       const innerMat = new T.MeshStandardMaterial({
         color: 0xffffff,
         emissive: 0xffd86b,
@@ -10506,10 +10506,18 @@ function rebuild3DTrack() {
         opacity: 0.85,
       });
       boxGroup.add(new T.Mesh(innerGeo, innerMat));
-      // Point light inside
-      const boxLight = new T.PointLight(0xffd86b, 0.4, 80);
+      // Question mark indicator (flat box with "?" feel)
+      const qMat = new T.MeshStandardMaterial({ color: 0xffd86b, emissive: 0xffd86b, emissiveIntensity: 1.2 });
+      const qDot = new T.Mesh(new T.BoxGeometry(4, 4, 4), qMat);
+      qDot.position.y = -8;
+      boxGroup.add(qDot);
+      const qCurve = new T.Mesh(new T.BoxGeometry(4, 10, 4), qMat);
+      qCurve.position.y = 2;
+      boxGroup.add(qCurve);
+      // Point light inside (stronger)
+      const boxLight = new T.PointLight(0xffd86b, 0.7, 120);
       boxGroup.add(boxLight);
-      boxGroup.position.set(ib.x, 12, ib.y);
+      boxGroup.position.set(ib.x, 22, ib.y);
       boxGroup._itemRef = ib;
       boxGroup._innerMat = innerMat;
       boxGroup._outerMat = outerMat;
@@ -11053,28 +11061,39 @@ function createHazardMesh3D(hazard) {
     mesh = g;
 
   } else if (ctor === "DossierProjectile") {
-    // Clinical dossier: folder with pages and tab
+    // Manila folder with papers sticking out
     const g = new T.Group();
-    const folder = new T.Mesh(
-      new T.BoxGeometry(18, 22, 3),
-      new T.MeshStandardMaterial({ color: 0x57f2ff, emissive: 0x57f2ff, emissiveIntensity: 0.5, transparent: true, opacity: 0.85 })
-    );
-    g.add(folder);
-    // Tab
-    const tab = new T.Mesh(
-      new T.BoxGeometry(8, 4, 3.5),
-      new T.MeshStandardMaterial({ color: 0x3ad0ee, emissive: 0x57f2ff, emissiveIntensity: 0.7 })
-    );
-    tab.position.set(-5, 11, 0);
+    const folderMat = new T.MeshStandardMaterial({ color: 0x57f2ff, emissive: 0x57f2ff, emissiveIntensity: 0.45, metalness: 0.2, roughness: 0.5 });
+    // Back panel of folder
+    const back = new T.Mesh(new T.BoxGeometry(22, 26, 1.5), folderMat);
+    back.position.z = -2;
+    g.add(back);
+    // Front panel (slightly shorter, like an open folder)
+    const frontMat = new T.MeshStandardMaterial({ color: 0x3ad0ee, emissive: 0x57f2ff, emissiveIntensity: 0.35, metalness: 0.2, roughness: 0.5 });
+    const front = new T.Mesh(new T.BoxGeometry(22, 20, 1.5), frontMat);
+    front.position.set(0, -3, 2);
+    g.add(front);
+    // Tab at top
+    const tabMat = new T.MeshStandardMaterial({ color: 0x57f2ff, emissive: 0x57f2ff, emissiveIntensity: 0.8 });
+    const tab = new T.Mesh(new T.BoxGeometry(10, 5, 2), tabMat);
+    tab.position.set(-4, 15, -2);
     g.add(tab);
-    // Page lines
-    const lineMat = new T.MeshStandardMaterial({ color: 0xffffff, emissive: 0xffffff, emissiveIntensity: 0.3 });
-    for (let i = 0; i < 4; i++) {
-      const line = new T.Mesh(new T.BoxGeometry(12, 0.8, 0.5), lineMat);
-      line.position.set(0, 5 - i * 4, 1.8);
+    // Papers sticking out the top (3 pages at slightly different angles)
+    const paperMat = new T.MeshStandardMaterial({ color: 0xeeeeff, emissive: 0xffffff, emissiveIntensity: 0.15, side: T.DoubleSide });
+    for (let p = 0; p < 3; p++) {
+      const page = new T.Mesh(new T.BoxGeometry(18, 24, 0.4), paperMat);
+      page.position.set(rand(-1, 1), 1 + p * 0.5, -0.5 + p * 0.8);
+      page.rotation.z = (p - 1) * 0.04;
+      g.add(page);
+    }
+    // Text lines on front page
+    const lineMat = new T.MeshStandardMaterial({ color: 0x57f2ff, emissive: 0x57f2ff, emissiveIntensity: 0.6 });
+    for (let i = 0; i < 5; i++) {
+      const line = new T.Mesh(new T.BoxGeometry(14 - (i % 2) * 4, 0.6, 0.3), lineMat);
+      line.position.set(0, 8 - i * 4, 2.2);
       g.add(line);
     }
-    const trail = new T.PointLight(0x57f2ff, 0.4, 50);
+    const trail = new T.PointLight(0x57f2ff, 0.5, 70);
     g.add(trail);
     g.position.y = 14;
     mesh = g;
@@ -11192,7 +11211,7 @@ function sync3DScene(time) {
     const spin = (m._itemRef?.spin || 0) + time * 0.002;
     m.rotation.y = spin;
     m.rotation.x = Math.sin(time * 0.004 + m.position.x * 0.01) * 0.3;
-    m.position.y = 14 + Math.sin(time * 0.003 + m.position.x * 0.01) * 4;
+    m.position.y = 22 + Math.sin(time * 0.003 + m.position.x * 0.01) * 5;
     // Inner diamond counter-rotate
     if (m.children && m.children[1]) {
       m.children[1].rotation.y = -spin * 1.5;
