@@ -11198,7 +11198,7 @@ function showFinishScreen() {
       // Pixel-art podium for top 3
       const top3 = ranking.slice(0, Math.min(3, ranking.length));
       html += `<div style="display:flex;align-items:flex-end;justify-content:center;gap:6px;margin-bottom:14px;padding:8px 0;">`;
-      const podiumH = [72, 90, 58];
+      const podiumH = [90, 68, 52];
       const podiumOrder = top3.length >= 2 ? [1, 0, 2] : [0];
       podiumOrder.forEach(pi => {
         const k = top3[pi];
