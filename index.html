@@ -780,6 +780,7 @@
       <div><span class="key">W</span> / <span class="key">A</span> / <span class="key">S</span> / <span class="key">D</span> - Drive</div><div><span class="key">↑</span> / <span class="key">←</span> / <span class="key">↓</span> / <span class="key">→</span> - Drive</div>
       <div><span class="key">Space</span> - Drift</div><div><span class="key">Right Shift</span> - Drift</div>
       <div><span class="key">Left Shift</span> - Use Item</div><div><span class="key">.</span> or <span class="key">/</span> - Use Item</div>
+      <div><span class="key">Q</span> - Ultimate</div><div><span class="key">L</span> - Ultimate</div>
       <div style="grid-column: span 2; border-top: 1px solid rgba(123, 117, 255, 0.1); margin-top: 5px; padding-top: 8px; text-align: center;">
         <span class="key">P</span> - Pause &nbsp;·&nbsp; <span class="key">R</span> - Restart &nbsp;·&nbsp; <span class="key">M</span> - Mute
       </div>
@@ -942,8 +943,10 @@ const TUNING = {
   BOOST_DURATION: 75,
   CITATION_BOOST_DURATION: 24,
   CITATION_BOOST_EVERY: 5,
-  CITATION_SPEED_PER_STACK: 0.006,
+  CITATION_SPEED_PER_STACK: 0,
   CITATION_SPEED_MAX_STACKS: 20,
+  ULTIMATE_COINS_NEEDED: 10,
+  ULTIMATE_DURATION_BASE: 180,
   SHIELD_DURATION: 360,
   SHIELD_DURATION_RISSAL: 540,
   HANDLING_DURATION: 360,
@@ -1581,8 +1584,18 @@ function drawMergeRequestTethers(ctx, time) {
   }
 }
 
-function triggerQuote(kart, event) {
-  if (kart.quoteTimer > 40) return; // don't spam too fast
+function triggerQuote(kart, event, otherKart = null) {
+  if (kart.quoteTimer > 40) return;
+
+  if (otherKart && event === "collide") {
+    const rivalLine = getRivalryQuote(kart.charId, otherKart.charId);
+    if (rivalLine) {
+      kart.activeQuote = kart.charId === "anton" ? makeTypo(rivalLine) : rivalLine;
+      kart.quoteTimer = 130;
+      return;
+    }
+  }
+
   const charQuotes = QUOTES[kart.charId];
   if (!charQuotes) return;
   const eventQuotes = charQuotes[event];
@@ -1592,7 +1605,202 @@ function triggerQuote(kart, event) {
     quote = makeTypo(quote);
   }
   kart.activeQuote = quote;
-  kart.quoteTimer = 130; // ~2.2 seconds display
+  kart.quoteTimer = 130;
+}
+
+const RIVALRY_QUOTES = {
+  "anton|artur": ["arutr nitpicks again!", "nice prompt bro", "who broke my tests??", "stop touching my worker!"],
+  "artur|anton": ["damn anton got hands", "who spells like that?!", "fix your typos bro", "prompty vs worker war!"],
+  "anton|rissal": ["don't panic rissal!", "works on my manchie", "just merge it bro"],
+  "rissal|anton": ["Don't merge that!", "PANIC! Anton is here!", "Most dangerous merge!"],
+  "anton|pia": ["nice endpoint bro", "thinkpad can't keep up!", "types faster than layouts"],
+  "pia|anton": ["small loser speller!", "Protect our endpoints from typos!", "at least I can spell"],
+  "anton|florian": ["regulatory shmegulatory", "just ship it florian!", "compliance who?"],
+  "florian|anton": ["File a deficiency report!", "Typos violate GxP!", "Non-compliant code detected!"],
+  "artur|rissal": ["stop panicking bro!", "holy shit rissal chill", "prayer > panic"],
+  "rissal|artur": ["Stop praying and CODE!", "PANIC! Artur incoming!", "Most dangerous prayer!"],
+  "artur|pia": ["Who broke my layout?!", "damn window heights!", "thinkpad vs ultrawide war"],
+  "pia|artur": ["Fix your own heights!", "small loser ultrawide!", "Thinkpads don't crash!"],
+  "artur|florian": ["damn florian got hands", "CEO diff!", "holy shit the exec!"],
+  "florian|artur": ["Board meeting collision!", "Accelerated review needed!", "Executive override!"],
+  "rissal|pia": ["Don't touch my workspace!", "PANIC! Pia rams!", "Careful with endpoints!"],
+  "pia|rissal": ["Calm down rissal!", "Protect endpoints from panic!", "Grid beats panic!"],
+  "rissal|florian": ["Most dangerous executive!", "PANIC! Compliance!", "Hopefully survives audit!"],
+  "florian|rissal": ["Emotional non-compliance!", "File panic report!", "Audit your emotions!"],
+  "pia|florian": ["Protect our code from execs!", "Sign the PR yourself!", "killed weird executive svg"],
+  "florian|pia": ["Non-disclosure collision!", "ThinkPad audit scheduled!", "Regulatory endpoint check!"],
+};
+
+function getRivalryQuote(charA, charB) {
+  const key = `${charA}|${charB}`;
+  const lines = RIVALRY_QUOTES[key];
+  if (!lines || !lines.length) return null;
+  if (Math.random() < 0.55) return pick(lines);
+  return null;
+}
+
+function getUltimateTier(kart) {
+  const ranking = rankAll();
+  const rank = ranking.indexOf(kart) + 1;
+  const total = ranking.length;
+  if (total <= 1) return 2;
+  if (rank >= total) return 3;
+  if (rank >= Math.ceil(total * 0.5)) return 2;
+  return 1;
+}
+
+function activateUltimate(kart) {
+  if (!kart || !kart.ultReady || kart.ultActiveTimer > 0 || kart.finished || kart.eliminated) return;
+  kart.ultReady = false;
+  kart.ultCharge = 0;
+  const tier = getUltimateTier(kart);
+  kart.ultTier = tier;
+  kart.ultActiveTimer = TUNING.ULTIMATE_DURATION_BASE + tier * 30;
+
+  if (kart.isPlayer) {
+    game.shake = Math.max(game.shake, 6 + tier * 3);
+    game.flash = Math.max(game.flash, 5 + tier * 2);
+    Sound.tone(330, 0.3, "sawtooth", 0.2, 1320);
+    Sound.tone(660, 0.25, "triangle", 0.15, 1980);
+    Sound.noise(0.2, 0.1, 400);
+  }
+
+  game.particles.add({
+    type: "ring", x: kart.x, y: kart.y, vx: 0, vy: 0,
+    life: 30, maxLife: 30, size: 80 + tier * 20, startSize: 10,
+    color: kart.color
+  });
+  game.particles.burst(kart.x, kart.y, kart.color, 30 + tier * 10, { type: "spark", spdMin: 3, spdMax: 8 });
+
+  const charId = kart.charId;
+
+  if (charId === "anton") {
+    // Typo Storm: wobble/invert steering on opponents
+    const duration = [45, 90, 150][tier - 1];
+    for (const k of getActiveKarts()) {
+      if (k === kart || k.finished || k.eliminated) continue;
+      k.doubleBlindTimer = Math.max(k.doubleBlindTimer, duration);
+      if (game.particles) {
+        game.particles.add({
+          type: "text", text: pick(["pomrpt!", "btet!", "naalysis!", "arutr!", "manchie!"]),
+          x: k.x, y: k.y - 28, vx: rand(-0.5, 0.5), vy: -1.0,
+          life: 60, maxLife: 60, size: 16, color: "#ff4d6d", drag: 0.98
+        });
+      }
+    }
+    game.particles.add({
+      type: "text", text: tier >= 3 ? "TYPO STORM!!!" : tier >= 2 ? "TYPO STORM!" : "TYPO BURST",
+      x: kart.x, y: kart.y - 38, vx: 0, vy: -1.2,
+      life: 70, maxLife: 70, size: 22, color: "#ff4d6d", drag: 0.98
+    });
+    triggerQuote(kart, "boost");
+
+  } else if (charId === "artur") {
+    // Prayer Protocol: invuln + max speed + fire trail, touches spin out opponents
+    const duration = [90, 150, 240][tier - 1];
+    kart.invuln = Math.max(kart.invuln, duration);
+    kart.boostTimer = Math.max(kart.boostTimer, duration);
+    kart.shieldTimer = Math.max(kart.shieldTimer, duration);
+    kart.ultraBoostActive = true;
+    game.particles.add({
+      type: "text", text: tier >= 3 ? "DIVINE INTERVENTION!!!" : tier >= 2 ? "PRAYER MODE!" : "BLESSED SPEED",
+      x: kart.x, y: kart.y - 38, vx: 0, vy: -1.2,
+      life: 70, maxLife: 70, size: 22, color: "#ff8a3b", drag: 0.98
+    });
+    triggerQuote(kart, "boost");
+
+  } else if (charId === "rissal") {
+    // Panic Deploy: drop panic clouds + wipe items from opponents
+    const cloudCount = [2, 4, 6][tier - 1];
+    for (let i = 0; i < cloudCount; i++) {
+      const ang = kart.heading + Math.PI + rand(-0.8, 0.8);
+      const spawnDist = 40 + i * 35;
+      const cx = kart.x + Math.cos(ang) * spawnDist;
+      const cy = kart.y + Math.sin(ang) * spawnDist;
+      game.hazards.push(new DoubleBlindCloud(cx, cy, ang, kart));
+    }
+    if (tier >= 2) {
+      for (const k of getActiveKarts()) {
+        if (k === kart || k.finished || k.eliminated) continue;
+        if (k.itemState === "rolling" || k.itemState === "active") {
+          k.itemState = "empty";
+          k.itemSlot = null;
+        }
+      }
+    }
+    if (tier >= 3) {
+      kart.shieldTimer = Math.max(kart.shieldTimer, 180);
+      kart.boostTimer = Math.max(kart.boostTimer, 90);
+    }
+    game.particles.add({
+      type: "text", text: tier >= 3 ? "TOTAL PANIC!!!" : tier >= 2 ? "PANIC DEPLOY!" : "PANIC CLOUD",
+      x: kart.x, y: kart.y - 38, vx: 0, vy: -1.2,
+      life: 70, maxLife: 70, size: 22, color: "#4dffaa", drag: 0.98
+    });
+    triggerQuote(kart, "boost");
+
+  } else if (charId === "pia") {
+    // ThinkPad Slam: AOE shockwave that pushes/stuns nearby karts
+    const radius = [120, 180, 260][tier - 1];
+    const force = [4, 6.5, 10][tier - 1];
+    const stunTime = [20, 35, 55][tier - 1];
+    for (const k of getActiveKarts()) {
+      if (k === kart || k.finished || k.eliminated) continue;
+      const d = dist(kart.x, kart.y, k.x, k.y);
+      if (d > radius) continue;
+      const falloff = 1 - d / radius;
+      const nx = (k.x - kart.x) / Math.max(0.001, d);
+      const ny = (k.y - kart.y) / Math.max(0.001, d);
+      k.vx += nx * force * falloff;
+      k.vy += ny * force * falloff;
+      k.spinoutTimer = Math.max(k.spinoutTimer, stunTime);
+      k.spinAngle = 0;
+      triggerQuote(k, "crash");
+    }
+    for (let i = 0; i < (tier >= 3 ? 3 : tier >= 2 ? 2 : 1); i++) {
+      game.particles.add({
+        type: "ring", x: kart.x, y: kart.y, vx: 0, vy: 0,
+        life: 25 + i * 8, maxLife: 25 + i * 8,
+        size: radius * (0.6 + i * 0.3), startSize: 15 + i * 10,
+        color: "#9d4dff"
+      });
+    }
+    game.particles.add({
+      type: "text", text: tier >= 3 ? "THINKPAD SLAM!!!" : tier >= 2 ? "THINKPAD SLAM!" : "LAPTOP SLAP",
+      x: kart.x, y: kart.y - 38, vx: 0, vy: -1.2,
+      life: 70, maxLife: 70, size: 22, color: "#9d4dff", drag: 0.98
+    });
+    triggerQuote(kart, "boost");
+
+  } else if (charId === "florian") {
+    // Regulatory Lockdown: slow all opponents, lock their items, self boost
+    const slowDuration = [60, 120, 180][tier - 1];
+    const selfBoost = [60, 120, 180][tier - 1];
+    for (const k of getActiveKarts()) {
+      if (k === kart || k.finished || k.eliminated) continue;
+      k.placeboSlowTimer = Math.max(k.placeboSlowTimer, slowDuration);
+      if (tier >= 2 && (k.itemState === "rolling" || k.itemState === "active")) {
+        k.itemState = "empty";
+        k.itemSlot = null;
+      }
+      if (game.particles) {
+        game.particles.add({
+          type: "text", text: tier >= 3 ? "FDA REVIEW!" : "PENDING...",
+          x: k.x, y: k.y - 28, vx: rand(-0.3, 0.3), vy: -0.9,
+          life: 55, maxLife: 55, size: 14, color: "#57f2ff", drag: 0.98
+        });
+      }
+    }
+    kart.boostTimer = Math.max(kart.boostTimer, selfBoost);
+    kart.shieldTimer = Math.max(kart.shieldTimer, selfBoost);
+    if (tier >= 3) kart.handlingTimer = Math.max(kart.handlingTimer, selfBoost);
+    game.particles.add({
+      type: "text", text: tier >= 3 ? "REGULATORY LOCKDOWN!!!" : tier >= 2 ? "COMPLIANCE FREEZE!" : "PENDING APPROVAL",
+      x: kart.x, y: kart.y - 38, vx: 0, vy: -1.2,
+      life: 70, maxLife: 70, size: 22, color: "#57f2ff", drag: 0.98
+    });
+    triggerQuote(kart, "boost");
+  }
 }
 
 function getActiveHumanKarts() {
@@ -4002,8 +4210,8 @@ const Sound = {
 /* ============================================================
    INPUT
    ============================================================ */
-const keysP1 = { up: false, down: false, left: false, right: false, drift: false, driftPressed: false, item: false, itemPressed: false, leftPressed: false, rightPressed: false };
-const keysP2 = { up: false, down: false, left: false, right: false, drift: false, driftPressed: false, item: false, itemPressed: false, leftPressed: false, rightPressed: false };
+const keysP1 = { up: false, down: false, left: false, right: false, drift: false, driftPressed: false, item: false, itemPressed: false, ult: false, ultPressed: false, leftPressed: false, rightPressed: false };
+const keysP2 = { up: false, down: false, left: false, right: false, drift: false, driftPressed: false, item: false, itemPressed: false, ult: false, ultPressed: false, leftPressed: false, rightPressed: false };
 const keysGlobal = { pause: false, pausePressed: false, restart: false, restartPressed: false, mute: false, mutePressed: false, enter: false, enterPressed: false, back: false, backPressed: false };
 
 window.addEventListener("keydown", (e) => {
@@ -4063,6 +4271,10 @@ window.addEventListener("keydown", (e) => {
     if (!keysP1.item) keysP1.itemPressed = true;
     keysP1.item = true;
   }
+  if (code === "KeyQ") {
+    if (!keysP1.ult) keysP1.ultPressed = true;
+    keysP1.ult = true;
+  }
 
   // Player 2 mappings (Arrow keys + RightShift + . or /)
   if (code === "ArrowUp") {
@@ -4115,6 +4327,15 @@ window.addEventListener("keydown", (e) => {
       keysP1.item = true;
     }
   }
+  if (code === "KeyL") {
+    if (game.multiplayer) {
+      if (!keysP2.ult) keysP2.ultPressed = true;
+      keysP2.ult = true;
+    } else {
+      if (!keysP1.ult) keysP1.ultPressed = true;
+      keysP1.ult = true;
+    }
+  }
 
   Sound.ensure(); Sound.resume();
 }, { passive: false });
@@ -4133,6 +4354,8 @@ window.addEventListener("keyup", (e) => {
   if (code === "KeyD") keysP1.right = false;
   if (code === "Space") keysP1.drift = false;
   if (code === "ShiftLeft") keysP1.item = false;
+  if (code === "KeyQ") keysP1.ult = false;
+  if (code === "KeyL") { keysP2.ult = false; keysP1.ult = false; }
 
   // Player 2 keyups
   if (code === "ArrowUp") {
@@ -4436,7 +4659,7 @@ const MAPS = [
 ];
 
 const TOTAL_LAPS = 3;
-const CHECKPOINT_RADIUS = 130;
+const CHECKPOINT_RADIUS = 80;
 
 class Track {
   constructor() {
@@ -5937,6 +6160,12 @@ class Kart {
     this.mergePullTimer = 0;
     this.mergePullTarget = null;
     this.mergePullTargetId = null;
+
+    // Ultimate ability
+    this.ultCharge = 0;
+    this.ultReady = false;
+    this.ultActiveTimer = 0;
+    this.ultTier = 0;
   }
 
   forwardSpeed() {
@@ -6115,11 +6344,9 @@ class Kart {
     }
 
     // Speed cap (boost increases, drafting increases it slightly too)
-    const citationStacks = Math.min(this.coinsCollected || 0, TUNING.CITATION_SPEED_MAX_STACKS);
-    const citationMult = 1 + citationStacks * TUNING.CITATION_SPEED_PER_STACK;
     const powerMult = this.boostTimer > 0 ? 1.55 : (this.draftBoostTimer > 0 ? 1.25 : this.citationBoostTimer > 0 ? 1.12 : 1);
     const slowMult = this.placeboSlowTimer > 0 ? 0.72 : 1;
-    const cap = this.maxSpeed * citationMult * powerMult * slowMult * speedCapMul;
+    const cap = this.maxSpeed * powerMult * slowMult * speedCapMul;
     if (vF > cap) vF = cap;
     if (vF < -this.reverseMax) vF = -this.reverseMax;
 
@@ -6480,6 +6707,31 @@ class Kart {
     ctx.fillStyle = this._darken(this.color, 0.55);
     ctx.fillRect(-15, -9, 3, 18);
 
+    // Ultimate ready glow
+    if (this.ultReady) {
+      const pulse = 0.4 + 0.4 * Math.sin(time * 0.015);
+      ctx.strokeStyle = `rgba(255, 216, 107, ${pulse})`;
+      ctx.lineWidth = 2.5;
+      ctx.setLineDash([6, 4]);
+      ctx.beginPath();
+      ctx.arc(0, 0, 26, 0, TAU);
+      ctx.stroke();
+      ctx.setLineDash([]);
+    }
+
+    // Ultimate active aura
+    if (this.ultActiveTimer > 0) {
+      const a = 0.5 + 0.3 * Math.sin(time * 0.025);
+      ctx.shadowBlur = 15;
+      ctx.shadowColor = this.color;
+      ctx.strokeStyle = `rgba(255, 255, 255, ${a})`;
+      ctx.lineWidth = 3;
+      ctx.beginPath();
+      ctx.arc(0, 0, 24, 0, TAU);
+      ctx.stroke();
+      ctx.shadowBlur = 0;
+    }
+
     // Shield
     if (this.shieldTimer > 0) {
       const a = 0.3 + 0.2 * Math.sin(time * 0.02);
@@ -6580,6 +6832,14 @@ class PlayerKart extends Kart {
     if (itemPressed && this.itemState === "active" && this.itemSlot) {
       this.useItem();
     }
+
+    // Ultimate ability activation
+    const ultPressed = this.playerIndex === 2 ? consumePressedP2("ult") : consumePressedP1("ult");
+    if (ultPressed && this.ultReady) {
+      activateUltimate(this);
+    }
+
+    if (this.ultActiveTimer > 0) this.ultActiveTimer -= dt;
 
     const onRoad = track.isOnRoad(this.x, this.y);
     const r = this.applyPhysics(input, track, dt, onRoad);
@@ -6699,8 +6959,10 @@ class AIKart extends Kart {
 
     // Lateral offset along the segment normal for varied racing line
     const seg = track.segments[(this.aiTargetIdx - 1 + track.n) % track.n];
-    let aimX = lerp(target.x, next.x, 0.30) + seg.nx * (this.lateralOffset * (seg.halfW * 0.55));
-    let aimY = lerp(target.y, next.y, 0.30) + seg.ny * (this.lateralOffset * (seg.halfW * 0.55));
+    const segHalfW = seg.halfW;
+    const lookAheadBlend = clamp(segHalfW / 120, 0.10, 0.35);
+    let aimX = lerp(target.x, next.x, lookAheadBlend) + seg.nx * (this.lateralOffset * (segHalfW * 0.45));
+    let aimY = lerp(target.y, next.y, lookAheadBlend) + seg.ny * (this.lateralOffset * (segHalfW * 0.45));
 
     // Curvature lookahead corners
     const currentWP = track.waypoints[(this.aiTargetIdx - 1 + track.n) % track.n];
@@ -6864,6 +7126,16 @@ class AIKart extends Kart {
       }
     }
 
+    // AI ultimate usage
+    if (this.ultReady && this.ultActiveTimer <= 0) {
+      const aiRank = rankAll().indexOf(this) + 1;
+      const useChance = aiRank >= 3 ? 0.015 : aiRank >= 2 ? 0.008 : 0.004;
+      if (Math.random() < useChance * dt) {
+        activateUltimate(this);
+      }
+    }
+    if (this.ultActiveTimer > 0) this.ultActiveTimer -= dt;
+
     // Dynamic AI Rubberbanding pace adjustments
     let leadHumanProgress = progressValue(game.player);
     if (game.multiplayer && game.player2) {
@@ -6953,8 +7225,9 @@ class AIKart extends Kart {
       });
     }
 
-    // Advance waypoint when close
-    if (dist(this.x, this.y, target.x, target.y) < CHECKPOINT_RADIUS * 1.3) {
+    // Advance waypoint when close — adaptive radius based on road width
+    const advanceRadius = Math.max(55, segHalfW * 1.4);
+    if (dist(this.x, this.y, target.x, target.y) < advanceRadius) {
       this.aiTargetIdx = (this.aiTargetIdx + 1) % track.n;
       this.lateralOffset = rand(-0.5, 0.5);
     }
@@ -7736,9 +8009,10 @@ function checkProgress(kart) {
   if (target && dist(kart.x, kart.y, target.x, target.y) < CHECKPOINT_RADIUS) {
     hitCheckpoint = true;
   } else if (open) {
-    // For open trails, use segment proximity as fallback (no finish line concern)
     const cs = game.track.closestSegment(kart.x, kart.y);
-    if (cs.dist < 200 && cs.idx === kart.nextCheckpoint) {
+    const openSeg = game.track.segments[kart.nextCheckpoint];
+    const openMaxDist = openSeg ? openSeg.halfW + 30 : 140;
+    if (cs.dist < openMaxDist && cs.idx === kart.nextCheckpoint) {
       hitCheckpoint = true;
     }
   }
@@ -7749,7 +8023,9 @@ function checkProgress(kart) {
     kart.checkpointsThisLap >= game.track.n - 2;
   if (!hitCheckpoint && !open && !isFinishCheckpoint) {
     const cs = game.track.closestSegment(kart.x, kart.y);
-    if (cs.dist < 180 && cs.idx === kart.nextCheckpoint) {
+    const cpSeg = game.track.segments[kart.nextCheckpoint];
+    const maxDist = cpSeg ? cpSeg.halfW + 20 : 100;
+    if (cs.dist < maxDist && cs.idx === kart.nextCheckpoint) {
       hitCheckpoint = true;
     }
   }
@@ -7828,24 +8104,34 @@ function checkItems(kart) {
     }
     if (dist(kart.x, kart.y, c.x, c.y) < 18) {
       c.collected = true;
-      c.respawn = 700; // many frames before respawn
+      c.respawn = 700;
       kart.coinsCollected++;
-      kart.citationBoostTimer = Math.max(kart.citationBoostTimer || 0, TUNING.CITATION_BOOST_DURATION);
       requestP2pPickup("coin", i, kart);
+
+      if (!kart.ultReady) {
+        kart.ultCharge = Math.min(kart.ultCharge + 1, TUNING.ULTIMATE_COINS_NEEDED);
+        if (kart.ultCharge >= TUNING.ULTIMATE_COINS_NEEDED) {
+          kart.ultReady = true;
+          if (kart.isPlayer) {
+            Sound.tone(880, 0.15, "triangle", 0.18, 1760);
+            Sound.tone(1320, 0.12, "sine", 0.12, 1760);
+            game.particles.add({
+              type: "text", text: "ULTIMATE READY!", x: kart.x, y: kart.y - 34,
+              vx: 0, vy: -1.0, life: 70, maxLife: 70, size: 20, color: "#ffd86b", drag: 0.98,
+            });
+            game.particles.burst(kart.x, kart.y, "#ffd86b", 24, { type: "spark", spdMin: 2, spdMax: 5 });
+          }
+        }
+      }
+
       if (kart.isPlayer) {
         Sound.coin();
         game.particles.burst(c.x, c.y, "#ffd86b", 10, { type: "spark" });
+        const chargeText = kart.ultReady ? "ULT READY" : `${kart.ultCharge}/${TUNING.ULTIMATE_COINS_NEEDED}`;
         game.particles.add({
           type: "text", text: "+1 REF", x: c.x, y: c.y - 10,
           vx: 0, vy: -1.2, life: 40, maxLife: 40, size: 14, color: "#ffd86b", drag: 1,
         });
-        if (kart.coinsCollected % TUNING.CITATION_BOOST_EVERY === 0) {
-          kart.boostTimer = Math.max(kart.boostTimer, TUNING.CITATION_BOOST_DURATION * 2);
-          game.particles.add({
-            type: "text", text: "EVIDENCE BOOST!", x: kart.x, y: kart.y - 34,
-            vx: 0, vy: -1.0, life: 58, maxLife: 58, size: 18, color: "#a4ff80", drag: 0.98,
-          });
-        }
       }
     }
   }
@@ -7920,9 +8206,9 @@ function applyP2pPickupRequest(data, sourceConn = null) {
     coin.collected = true;
     coin.respawn = 700;
     kart.coinsCollected++;
-    kart.citationBoostTimer = Math.max(kart.citationBoostTimer || 0, TUNING.CITATION_BOOST_DURATION);
-    if (kart.coinsCollected % TUNING.CITATION_BOOST_EVERY === 0) {
-      kart.boostTimer = Math.max(kart.boostTimer, TUNING.CITATION_BOOST_DURATION * 2);
+    if (!kart.ultReady) {
+      kart.ultCharge = Math.min((kart.ultCharge || 0) + 1, TUNING.ULTIMATE_COINS_NEEDED);
+      if (kart.ultCharge >= TUNING.ULTIMATE_COINS_NEEDED) kart.ultReady = true;
     }
     return true;
   }
@@ -8014,9 +8300,20 @@ function kartCollisions() {
         a.vx *= 0.93; a.vy *= 0.93;
         b.vx *= 0.93; b.vy *= 0.93;
 
-        // Trigger collision quotes on both
-        triggerQuote(a, "collide");
-        triggerQuote(b, "collide");
+        // Artur Prayer Protocol: touching opponents spins them out
+        if (a.charId === "artur" && a.ultActiveTimer > 0 && b.spinoutTimer <= 0) {
+          b.spinoutTimer = Math.max(b.spinoutTimer, 35);
+          b.spinAngle = 0;
+          game.particles.burst(b.x, b.y, "#ff8a3b", 18, { type: "spark", spdMin: 2, spdMax: 5 });
+        } else if (b.charId === "artur" && b.ultActiveTimer > 0 && a.spinoutTimer <= 0) {
+          a.spinoutTimer = Math.max(a.spinoutTimer, 35);
+          a.spinAngle = 0;
+          game.particles.burst(a.x, a.y, "#ff8a3b", 18, { type: "spark", spdMin: 2, spdMax: 5 });
+        }
+
+        // Trigger collision quotes — with rivalry awareness
+        triggerQuote(a, "collide", b);
+        triggerQuote(b, "collide", a);
 
         const now = performance.now();
         if ((a.isPlayer || b.isPlayer) && now - Math.max(a.lastBumpAt, b.lastBumpAt) > 280) {
@@ -8345,13 +8642,8 @@ function update(dt, time) {
                 });
                 triggerQuote(kart, "boost");
               } else if (h instanceof DragonFire && isDragonEscape()) {
-                if (kart.shieldTimer > 0) {
-                  kart.shieldTimer = 0;
-                  game.particles.burst(kart.x, kart.y, "#78dcff", 18, { type: "spark", spdMin: 1.5, spdMax: 4 });
-                } else {
-                  eliminateKart(kart, "GOT THE HANDS!", h.x, h.y, "#ff1a1a");
-                  game.particles.burst(h.x, h.y, "#ff2200", 40, { type: "spark", spdMin: 2, spdMax: 8 });
-                }
+                eliminateKart(kart, "GOT THE HANDS!", h.x, h.y, "#ff1a1a");
+                game.particles.burst(h.x, h.y, "#ff2200", 40, { type: "spark", spdMin: 2, spdMax: 8 });
               } else if (isPlacebo) {
                 kart.placeboSlowTimer = Math.max(kart.placeboSlowTimer || 0, TUNING.PLACEBO_SLOW_DURATION);
                 if (kart.itemState === "rolling" || kart.itemState === "active") {
@@ -9106,6 +9398,67 @@ function drawFinishBanner() {
   ctx.restore();
 }
 
+function drawUltimateMeter(ctx, x, y, w, kart, time) {
+  if (!kart) return;
+  const h = 10;
+  const charge = clamp(kart.ultCharge / TUNING.ULTIMATE_COINS_NEEDED, 0, 1);
+  const ready = kart.ultReady;
+  const active = kart.ultActiveTimer > 0;
+
+  ctx.save();
+
+  ctx.fillStyle = "rgba(0,0,0,0.5)";
+  roundRect(ctx, x - 2, y - 2, w + 4, h + 4, 5);
+  ctx.fill();
+
+  if (ready) {
+    const pulse = 0.6 + 0.4 * Math.sin(time * 0.012);
+    ctx.fillStyle = `rgba(255, 216, 107, ${pulse})`;
+    roundRect(ctx, x, y, w, h, 3);
+    ctx.fill();
+    ctx.strokeStyle = "#ffd86b";
+    ctx.lineWidth = 1.5;
+    roundRect(ctx, x, y, w, h, 3);
+    ctx.stroke();
+
+    ctx.fillStyle = "#fff";
+    ctx.font = "bold 9px sans-serif";
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    const keyLabel = kart.playerIndex === 2 ? "[L]" : "[Q]";
+    ctx.fillText(`ULTIMATE READY ${keyLabel}`, x + w / 2, y + h / 2);
+  } else if (active) {
+    const remaining = clamp(kart.ultActiveTimer / (TUNING.ULTIMATE_DURATION_BASE + kart.ultTier * 30), 0, 1);
+    ctx.fillStyle = hexToRgba(kart.color, 0.7);
+    roundRect(ctx, x, y, w * remaining, h, 3);
+    ctx.fill();
+    ctx.strokeStyle = kart.color;
+    ctx.lineWidth = 1;
+    roundRect(ctx, x, y, w, h, 3);
+    ctx.stroke();
+    ctx.fillStyle = "#fff";
+    ctx.font = "bold 9px sans-serif";
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.fillText("ULTIMATE ACTIVE", x + w / 2, y + h / 2);
+  } else if (charge > 0) {
+    ctx.fillStyle = "rgba(255, 216, 107, 0.4)";
+    roundRect(ctx, x, y, w * charge, h, 3);
+    ctx.fill();
+    ctx.strokeStyle = "rgba(255, 216, 107, 0.5)";
+    ctx.lineWidth = 1;
+    roundRect(ctx, x, y, w, h, 3);
+    ctx.stroke();
+    ctx.fillStyle = "#ebe4ff";
+    ctx.font = "bold 9px sans-serif";
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.fillText(`ULT ${kart.ultCharge}/${TUNING.ULTIMATE_COINS_NEEDED}`, x + w / 2, y + h / 2);
+  }
+
+  ctx.restore();
+}
+
 function drawHUD(time) {
   if (!game.player) return;
   ctx.save();
@@ -9190,6 +9543,9 @@ function drawHUD(time) {
     ctx.textAlign = "center";
     ctx.fillText(game.player.driftCharge >= TUNING.DRIFT_TIER3 ? "ULTRA TURBO READY" : game.player.driftCharge >= TUNING.DRIFT_TIER2 ? "SUPER TURBO" : "MINI TURBO", x + w / 2, y - 7);
   }
+
+  // Ultimate charge meter (left of center bottom)
+  drawUltimateMeter(ctx, (VIEW_W - 140) / 2, VIEW_H - 52, 140, game.player, time);
 
   // Regulaido Autopilot Active Watermark Panel (top-center, beautifully glassmorphic)
   const wmW = 200, wmH = 24;
@@ -9608,6 +9964,10 @@ function drawHUDMultiplayer(time) {
     ctx.fillStyle = col;
     ctx.fillRect(x, y, w * charge, h);
   }
+
+  // 5. Ultimate meters
+  drawUltimateMeter(ctx, 15, VIEW_H - 48, 110, game.player, time);
+  drawUltimateMeter(ctx, VIEW_W - 125, VIEW_H - 48, 110, game.player2, time);
 
   // Regulaido Autopilot Active Watermark (top-center below split border)
   const wmW = 180, wmH = 20;
@@ -10391,7 +10751,11 @@ function serializeKartState(kart) {
     spinoutTimer: kart.spinoutTimer,
     coinsCollected: kart.coinsCollected,
     mergePullTimer: kart.mergePullTimer || 0,
-    mergePullTargetId: kart.mergePullTargetId || null
+    mergePullTargetId: kart.mergePullTargetId || null,
+    ultCharge: kart.ultCharge || 0,
+    ultReady: !!kart.ultReady,
+    ultActiveTimer: kart.ultActiveTimer || 0,
+    ultTier: kart.ultTier || 0
   };
 }
 
@@ -10440,6 +10804,10 @@ function applyKartState(kart, p, opts = {}) {
   kart.mergePullTimer = p.mergePullTimer || 0;
   kart.mergePullTargetId = p.mergePullTargetId || null;
   kart.mergePullTarget = getKartById(kart.mergePullTargetId);
+  if (p.ultCharge !== undefined) kart.ultCharge = p.ultCharge;
+  if (p.ultReady !== undefined) kart.ultReady = !!p.ultReady;
+  if (p.ultActiveTimer !== undefined) kart.ultActiveTimer = p.ultActiveTimer;
+  if (p.ultTier !== undefined) kart.ultTier = p.ultTier;
 }
 
 function serializeDragonState(dragon) {
@@ -10583,6 +10951,18 @@ function sendGuestSync() {
 }
 
 function handleP2pDisconnect({ silent = false } = {}) {
+  const leaveMsg = {
+    type: "player_left",
+    playerId: game.p2pLocalId || (game.p2pRole === "host" ? "host" : "guest"),
+    role: game.p2pRole
+  };
+  for (const conn of p2pConnections.values()) {
+    try { sendToConn(conn, leaveMsg); } catch(e) {}
+  }
+  if (game.p2pConn && game.p2pConn.open) {
+    try { sendToConn(game.p2pConn, leaveMsg); } catch(e) {}
+  }
+
   for (const conn of p2pConnections.values()) {
     try { conn.close(); } catch(e) {}
   }
@@ -10894,6 +11274,14 @@ function handleP2pData(data, sourceConn = null) {
     }
     if (game.p2pRole === "host") {
       broadcastP2pMessage(data, sourceConn);
+    }
+  }
+
+  else if (data.type === "player_left") {
+    const who = data.role === "host" ? "Host" : "A player";
+    handleP2pDisconnect({ silent: true });
+    if (game.state === STATE.RACING || game.state === STATE.COUNTDOWN) {
+      alert(`${who} left the race. Returning to menu.`);
     }
   }
 
