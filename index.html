@@ -10067,10 +10067,16 @@ const THREE_STATE = {
   scene: null,
   camera: null,
   trackMesh: null,
+  trackGroup: null,
   groundMesh: null,
   kartModels: new Map(),
   itemMeshes: [],
   coinMeshes: [],
+  boostPadMeshes: [],
+  hazardMeshes: new Map(),
+  movingObjectMeshes: [],
+  dragonModel: null,
+  dragonEscapeModel: null,
   particles3d: [],
   camSmooth: { x: 0, y: 0, z: 0, lx: 0, ly: 0, lz: 0 },
 };
@@ -10126,16 +10132,22 @@ function init3DScene() {
   THREE_STATE.camera = new T.PerspectiveCamera(70, VIEW_W / VIEW_H, 1, 8000);
   THREE_STATE.camera.position.set(0, 120, -200);
 
-  // Lighting
-  const ambient = new T.AmbientLight(0x1a1040, 0.8);
+  // Lighting -- hemisphere for rich ambient, directional for depth, point light follows player
+  const hemiLight = new T.HemisphereLight(0x1a1040, 0x0a1f0d, 0.65);
+  THREE_STATE.scene.add(hemiLight);
+  const ambient = new T.AmbientLight(0x1a1040, 0.45);
   THREE_STATE.scene.add(ambient);
-  const dirLight = new T.DirectionalLight(0x6666ff, 0.6);
-  dirLight.position.set(200, 400, -100);
+  const dirLight = new T.DirectionalLight(0x8888ff, 0.7);
+  dirLight.position.set(200, 500, -200);
   THREE_STATE.scene.add(dirLight);
-  const pointLight = new T.PointLight(0x57f2ff, 0.5, 2000);
+  const pointLight = new T.PointLight(0x57f2ff, 0.7, 2500);
   pointLight.position.set(0, 200, 0);
   THREE_STATE.scene.add(pointLight);
   THREE_STATE.playerLight = pointLight;
+  const backLight = new T.PointLight(0xff4d6d, 0.25, 1500);
+  backLight.position.set(0, 100, 0);
+  THREE_STATE.scene.add(backLight);
+  THREE_STATE.backLight = backLight;
 
   // Ground plane
   const groundGeo = new T.PlaneGeometry(12000, 12000);
@@ -10192,45 +10204,92 @@ function init3DScene() {
   });
 }
 
+function dispose3DObject(obj) {
+  if (!obj) return;
+  obj.traverse?.((child) => {
+    if (child.geometry) child.geometry.dispose();
+    if (child.material) {
+      if (Array.isArray(child.material)) child.material.forEach(m => m.dispose?.());
+      else child.material.dispose?.();
+    }
+  });
+}
+
+function get3DRoadEdges(track) {
+  const wp = track.waypoints;
+  const edges = [];
+  const closed = !track.isOpen;
+  const n = wp.length;
+  for (let i = 0; i < n; i++) {
+    const segNext = track.segments[i] || track.segments[track.segments.length - 1];
+    const segPrev = track.segments[(i - 1 + track.segments.length) % track.segments.length] || segNext;
+    if (!segNext) continue;
+    let nx, ny;
+    if (!closed && i === 0) {
+      nx = segNext.nx; ny = segNext.ny;
+    } else if (!closed && i === n - 1) {
+      nx = segPrev.nx; ny = segPrev.ny;
+    } else {
+      nx = segPrev.nx + segNext.nx;
+      ny = segPrev.ny + segNext.ny;
+      const nl = Math.hypot(nx, ny) || 1;
+      nx /= nl; ny /= nl;
+    }
+    const baseW = ((segPrev.halfW || track.halfWidth) + (segNext.halfW || track.halfWidth)) * 0.5;
+    const denom = Math.max(0.35, Math.abs(nx * segNext.nx + ny * segNext.ny));
+    const w = Math.min(baseW / denom, baseW * 1.8);
+    const p = wp[i];
+    edges.push({
+      left: { x: p.x + nx * w, y: p.y + ny * w },
+      right: { x: p.x - nx * w, y: p.y - ny * w },
+      center: p,
+    });
+  }
+  return edges;
+}
+
 function rebuild3DTrack() {
   if (!window.THREE || !THREE_STATE.scene || !game.track) return;
   const T = window.THREE;
   const sc = THREE_STATE.scene;
 
-  // Remove old track mesh
-  if (THREE_STATE.trackMesh) { sc.remove(THREE_STATE.trackMesh); THREE_STATE.trackMesh = null; }
+  // Remove old track/world meshes
+  if (THREE_STATE.trackGroup) {
+    sc.remove(THREE_STATE.trackGroup);
+    dispose3DObject(THREE_STATE.trackGroup);
+    THREE_STATE.trackGroup = null;
+  }
+  THREE_STATE.trackMesh = null;
   // Remove old kart models
   THREE_STATE.kartModels.forEach(m => sc.remove(m));
   THREE_STATE.kartModels.clear();
-  // Remove old items
-  THREE_STATE.itemMeshes.forEach(m => sc.remove(m));
   THREE_STATE.itemMeshes = [];
-  THREE_STATE.coinMeshes.forEach(m => sc.remove(m));
   THREE_STATE.coinMeshes = [];
+  THREE_STATE.boostPadMeshes = [];
+  THREE_STATE.movingObjectMeshes = [];
+  THREE_STATE.hazardMeshes.forEach(m => { sc.remove(m); dispose3DObject(m); });
+  THREE_STATE.hazardMeshes.clear();
+  if (THREE_STATE.dragonModel) { sc.remove(THREE_STATE.dragonModel); dispose3DObject(THREE_STATE.dragonModel); THREE_STATE.dragonModel = null; }
+  if (THREE_STATE.dragonEscapeModel) { sc.remove(THREE_STATE.dragonEscapeModel); dispose3DObject(THREE_STATE.dragonEscapeModel); THREE_STATE.dragonEscapeModel = null; }
+
+  const group = new T.Group();
+  THREE_STATE.trackGroup = group;
+  sc.add(group);
 
   // Build track ribbon from waypoints
   const wp = game.track.waypoints;
-  const hw = game.track.halfWidth;
   const verts = [];
   const colors = [];
+  const edges = get3DRoadEdges(game.track);
+  const segmentCount = game.track.isOpen ? edges.length - 1 : edges.length;
 
-  for (let i = 0; i < wp.length - 1; i++) {
-    const a = wp[i], b = wp[i + 1];
-    const dx = b.x - a.x, dy = b.y - a.y;
-    const len = Math.hypot(dx, dy);
-    if (len < 0.1) continue;
-    const nx = -dy / len, ny = dx / len;
-    const seg = game.track.segments[i];
-    const w = seg ? seg.halfW : hw;
+  for (let i = 0; i < segmentCount; i++) {
+    const e0 = edges[i];
+    const e1 = edges[(i + 1) % edges.length];
+    if (!e0 || !e1) continue;
 
-    // Two triangles per segment
-    const ax1 = a.x + nx * w, az1 = a.y + ny * w;
-    const ax2 = a.x - nx * w, az2 = a.y - ny * w;
-    const bx1 = b.x + nx * w, bz1 = b.y + ny * w;
-    const bx2 = b.x - nx * w, bz2 = b.y - ny * w;
-
-    verts.push(ax1, 0, az1, ax2, 0, az2, bx1, 0, bz1);
-    verts.push(ax2, 0, az2, bx2, 0, bz2, bx1, 0, bz1);
+    verts.push(e0.left.x, 0, e0.left.y, e0.right.x, 0, e0.right.y, e1.left.x, 0, e1.left.y);
+    verts.push(e0.right.x, 0, e0.right.y, e1.right.x, 0, e1.right.y, e1.left.x, 0, e1.left.y);
 
     // Edge glow coloring
     for (let v = 0; v < 6; v++) {
@@ -10245,30 +10304,66 @@ function rebuild3DTrack() {
 
   const roadMat = new T.MeshStandardMaterial({
     color: 0x0d0b21,
-    roughness: 0.6,
-    metalness: 0.4,
+    emissive: 0x050310,
+    emissiveIntensity: 0.15,
+    roughness: 0.5,
+    metalness: 0.5,
     vertexColors: false,
   });
   THREE_STATE.trackMesh = new T.Mesh(geo, roadMat);
   THREE_STATE.trackMesh.position.y = 0.5;
-  sc.add(THREE_STATE.trackMesh);
+  group.add(THREE_STATE.trackMesh);
+
+  // Rumble strip (slightly wider road with alternating colors)
+  const rumbleVerts = [];
+  const rumbleColors = [];
+  const rumbleExtra = 8;
+  for (let i = 0; i < segmentCount; i++) {
+    const e0 = edges[i];
+    const e1 = edges[(i + 1) % edges.length];
+    if (!e0 || !e1) continue;
+    const c0 = e0.center, c1 = e1.center;
+    const isEven = i % 2 === 0;
+    const r = isEven ? [1, 0.3, 0.42] : [0.64, 1.0, 0.5];
+    for (let side of [-1, 1]) {
+      const s0 = side === 1 ? e0.left : e0.right;
+      const s1 = side === 1 ? e1.left : e1.right;
+      const dx0 = s0.x - c0.x, dy0 = s0.y - c0.y;
+      const dl0 = Math.hypot(dx0, dy0) || 1;
+      const dx1 = s1.x - c1.x, dy1 = s1.y - c1.y;
+      const dl1 = Math.hypot(dx1, dy1) || 1;
+      const o0x = s0.x + (dx0 / dl0) * rumbleExtra, o0z = s0.y + (dy0 / dl0) * rumbleExtra;
+      const o1x = s1.x + (dx1 / dl1) * rumbleExtra, o1z = s1.y + (dy1 / dl1) * rumbleExtra;
+      rumbleVerts.push(s0.x, 0, s0.y, o0x, 0, o0z, s1.x, 0, s1.y);
+      rumbleVerts.push(o0x, 0, o0z, o1x, 0, o1z, s1.x, 0, s1.y);
+      for (let v = 0; v < 6; v++) rumbleColors.push(r[0], r[1], r[2]);
+    }
+  }
+  if (rumbleVerts.length > 0) {
+    const rGeo = new T.BufferGeometry();
+    rGeo.setAttribute("position", new T.Float32BufferAttribute(rumbleVerts, 3));
+    rGeo.setAttribute("color", new T.Float32BufferAttribute(rumbleColors, 3));
+    rGeo.computeVertexNormals();
+    const rMat = new T.MeshStandardMaterial({ vertexColors: true, roughness: 0.7, metalness: 0.2, emissive: 0x111111, emissiveIntensity: 0.3 });
+    const rumble = new T.Mesh(rGeo, rMat);
+    rumble.position.y = 0.3;
+    group.add(rumble);
+  }
 
   // Glowing edge lines
   for (let side = -1; side <= 1; side += 2) {
     const lineVerts = [];
-    for (let i = 0; i < wp.length; i++) {
-      if (i >= game.track.segments.length) break;
-      const p = wp[i];
-      const seg = game.track.segments[i];
-      if (!seg) continue;
-      const w = seg.halfW;
-      lineVerts.push(p.x + seg.nx * w * side, 1.5, p.y + seg.ny * w * side);
+    for (let i = 0; i < edges.length; i++) {
+      const e = edges[i];
+      if (!e) continue;
+      const p = side === 1 ? e.left : e.right;
+      lineVerts.push(p.x, 1.5, p.y);
     }
     if (lineVerts.length > 3) {
       const lineGeo = new T.BufferGeometry();
       lineGeo.setAttribute("position", new T.Float32BufferAttribute(lineVerts, 3));
       const lineMat = new T.LineBasicMaterial({ color: side === 1 ? 0x7b75ff : 0x57f2ff, linewidth: 2 });
-      sc.add(new T.Line(lineGeo, lineMat));
+      group.add(game.track.isOpen ? new T.Line(lineGeo, lineMat) : new T.LineLoop(lineGeo, lineMat));
     }
   }
 
@@ -10281,9 +10376,9 @@ function rebuild3DTrack() {
     const centerGeo = new T.BufferGeometry();
     centerGeo.setAttribute("position", new T.Float32BufferAttribute(centerVerts, 3));
     const centerMat = new T.LineDashedMaterial({ color: 0x7b75ff, dashSize: 24, gapSize: 32, linewidth: 1 });
-    const centerLine = new T.Line(centerGeo, centerMat);
+    const centerLine = game.track.isOpen ? new T.Line(centerGeo, centerMat) : new T.LineLoop(centerGeo, centerMat);
     centerLine.computeLineDistances();
-    sc.add(centerLine);
+    group.add(centerLine);
   }
 
   // Build kart models for all active karts
@@ -10292,7 +10387,6 @@ function rebuild3DTrack() {
   // Item boxes
   if (game.track.itemBoxes) {
     game.track.itemBoxes.forEach(ib => {
-      if (ib.collected) return;
       const boxGeo = new T.BoxGeometry(14, 14, 14);
       const boxMat = new T.MeshStandardMaterial({
         color: 0xffd86b,
@@ -10304,8 +10398,28 @@ function rebuild3DTrack() {
       const box = new T.Mesh(boxGeo, boxMat);
       box.position.set(ib.x, 12, ib.y);
       box._itemRef = ib;
-      sc.add(box);
+      group.add(box);
       THREE_STATE.itemMeshes.push(box);
+    });
+  }
+
+  // Boost pads
+  if (game.track.boostPads) {
+    game.track.boostPads.forEach(bp => {
+      const padGeo = new T.BoxGeometry(bp.w || 70, 1.5, bp.h || 36);
+      const padMat = new T.MeshStandardMaterial({
+        color: 0xa4ff80,
+        emissive: 0xa4ff80,
+        emissiveIntensity: 0.45,
+        transparent: true,
+        opacity: 0.75,
+      });
+      const pad = new T.Mesh(padGeo, padMat);
+      pad.position.set(bp.x, 2, bp.y);
+      pad.rotation.y = -(bp.ang || 0) + Math.PI / 2;
+      pad._boostPadRef = bp;
+      group.add(pad);
+      THREE_STATE.boostPadMeshes.push(pad);
     });
   }
 
@@ -10323,8 +10437,67 @@ function rebuild3DTrack() {
       const coin = new T.Mesh(coinGeo, coinMat);
       coin.position.set(c.x, 8, c.y);
       coin._coinRef = c;
-      sc.add(coin);
+      group.add(coin);
       THREE_STATE.coinMeshes.push(coin);
+    });
+  }
+
+  // Moving firewall gates
+  if (game.track.movingObjects) {
+    game.track.movingObjects.forEach(obj => {
+      const gateGeo = new T.BoxGeometry(16, 45, 52);
+      const gateMat = new T.MeshStandardMaterial({
+        color: new T.Color(obj.color || "#57f2ff"),
+        emissive: new T.Color(obj.color || "#57f2ff"),
+        emissiveIntensity: 0.55,
+        transparent: true,
+        opacity: 0.72,
+      });
+      const gate = new T.Mesh(gateGeo, gateMat);
+      gate.position.set(obj.x, 24, obj.y);
+      gate.rotation.y = -(obj.ang || 0) + Math.PI / 2;
+      gate._movingObjectRef = obj;
+      group.add(gate);
+      THREE_STATE.movingObjectMeshes.push(gate);
+    });
+  }
+
+  if (game.track.regulatoryDragon) {
+    THREE_STATE.dragonModel = buildDragonModel3D(false);
+    sc.add(THREE_STATE.dragonModel);
+  }
+
+  if (MAPS[game.selectedMapIdx || 0].id === "dragon_escape") {
+    THREE_STATE.dragonEscapeModel = buildDragonModel3D(true);
+    sc.add(THREE_STATE.dragonEscapeModel);
+  }
+
+  // Holographic pillar decorations along track
+  if (game.track.decorations && !game.track.isOpen) {
+    const pillarColors = [0x7b75ff, 0xfd9927, 0xff4d6d, 0xa4ff80, 0x57f2ff];
+    game.track.decorations.forEach((d, idx) => {
+      if (d.isJapanese) return;
+      const h = d.h || 50;
+      const r = (d.r || 12) * 0.6;
+      const pillarGeo = new T.CylinderGeometry(r * 0.6, r, h, 6);
+      const col = pillarColors[idx % pillarColors.length];
+      const pillarMat = new T.MeshStandardMaterial({
+        color: col,
+        emissive: col,
+        emissiveIntensity: 0.35,
+        transparent: true,
+        opacity: 0.45,
+        roughness: 0.2,
+        metalness: 0.8,
+      });
+      const pillar = new T.Mesh(pillarGeo, pillarMat);
+      pillar.position.set(d.x, h / 2, d.y);
+      group.add(pillar);
+      const capGeo = new T.SphereGeometry(r * 0.7, 6, 4);
+      const capMat = new T.MeshStandardMaterial({ color: col, emissive: col, emissiveIntensity: 0.8 });
+      const cap = new T.Mesh(capGeo, capMat);
+      cap.position.set(d.x, h + 2, d.y);
+      group.add(cap);
     });
   }
 
@@ -10366,14 +10539,37 @@ function buildKartModel3D(charId, color) {
   helmet.position.set(0, 14, -2);
   group.add(helmet);
 
+  // Windshield
+  const windshieldGeo = new T.BoxGeometry(11, 4, 1.5);
+  const windshieldMat = new T.MeshStandardMaterial({ color: 0x88ccff, emissive: 0x88ccff, emissiveIntensity: 0.15, transparent: true, opacity: 0.45, metalness: 0.9, roughness: 0.1 });
+  const windshield = new T.Mesh(windshieldGeo, windshieldMat);
+  windshield.position.set(0, 12.5, 4);
+  windshield.rotation.x = -0.35;
+  group.add(windshield);
+
   // Wheels
   const wheelGeo = new T.CylinderGeometry(3.5, 3.5, 4, 8);
   const wheelMat = new T.MeshStandardMaterial({ color: 0x111111, roughness: 0.8 });
+  const hubMat = new T.MeshStandardMaterial({ color: 0x444444, metalness: 0.7, roughness: 0.3 });
+  group._wheels = [];
   [[-8, 3, 10], [8, 3, 10], [-8, 3, -10], [8, 3, -10]].forEach(([wx, wy, wz]) => {
     const wheel = new T.Mesh(wheelGeo, wheelMat);
     wheel.position.set(wx, wy, wz);
     wheel.rotation.z = Math.PI / 2;
     group.add(wheel);
+    const hub = new T.Mesh(new T.CylinderGeometry(1.5, 1.5, 4.2, 6), hubMat);
+    hub.position.set(wx, wy, wz);
+    hub.rotation.z = Math.PI / 2;
+    group.add(hub);
+    group._wheels.push(wheel);
+  });
+
+  // Taillights
+  const tailMat = new T.MeshStandardMaterial({ color: 0xff2828, emissive: 0xff2828, emissiveIntensity: 0.6 });
+  [[-6, 6, -14], [6, 6, -14]].forEach(([tx, ty, tz]) => {
+    const tl = new T.Mesh(new T.BoxGeometry(3, 2, 1.5), tailMat);
+    tl.position.set(tx, ty, tz);
+    group.add(tl);
   });
 
   // Spoiler
@@ -10436,7 +10632,190 @@ function buildKartModel3D(charId, color) {
   group._shield = shield;
   group._shieldMat = shieldMat;
 
+  // Boost flame (hidden by default)
+  const flameGeo = new T.ConeGeometry(7, 28, 10);
+  const flameMat = new T.MeshStandardMaterial({
+    color: 0xff8a3b,
+    emissive: 0xff4d00,
+    emissiveIntensity: 1.2,
+    transparent: true,
+    opacity: 0,
+  });
+  const flame = new T.Mesh(flameGeo, flameMat);
+  flame.rotation.x = -Math.PI / 2;
+  flame.position.set(0, 5, -28);
+  group.add(flame);
+  group._flame = flame;
+  group._flameMat = flameMat;
+
   return group;
+}
+
+function buildDragonModel3D(isEscapeDragon = false) {
+  if (!window.THREE) return null;
+  const T = window.THREE;
+  const group = new T.Group();
+  const s = isEscapeDragon ? 1.6 : 1.15;
+  const baseColor = isEscapeDragon ? 0x2a1010 : 0x3a0d20;
+  const glowColor = isEscapeDragon ? 0xff3300 : 0xff3366;
+  const bodyMat = new T.MeshStandardMaterial({ color: baseColor, emissive: glowColor, emissiveIntensity: 0.22, roughness: 0.45 });
+  const boneMat = new T.MeshStandardMaterial({ color: 0x4a2818, emissive: glowColor, emissiveIntensity: 0.08, roughness: 0.6 });
+  const wingMat = new T.MeshStandardMaterial({ color: baseColor, emissive: glowColor, emissiveIntensity: 0.3, transparent: true, opacity: 0.65, side: T.DoubleSide });
+
+  // Neck + body chain (5 connected spheres)
+  [[-80, 28, 0, 32], [-42, 34, 0, 36], [-4, 38, 0, 38], [30, 42, 0, 32], [58, 48, 0, 26]].forEach(([px, py, pz, r]) => {
+    const seg = new T.Mesh(new T.SphereGeometry(r, 12, 8), bodyMat);
+    seg.position.set(px, py, pz);
+    seg.scale.set(1.1, 0.7, 0.75);
+    group.add(seg);
+  });
+
+  // Head
+  const head = new T.Mesh(new T.SphereGeometry(24, 14, 10), bodyMat);
+  head.scale.set(1.4, 0.85, 0.85);
+  head.position.set(80, 52, 0);
+  group.add(head);
+  group._head = head;
+
+  // Snout / jaw
+  const jaw = new T.Mesh(new T.BoxGeometry(38, 12, 20), bodyMat);
+  jaw.position.set(108, 48, 0);
+  group.add(jaw);
+  group._jaw = jaw;
+
+  // Lower jaw (animated)
+  const lowerJaw = new T.Mesh(new T.BoxGeometry(32, 8, 18), bodyMat);
+  lowerJaw.position.set(104, 38, 0);
+  group.add(lowerJaw);
+  group._lowerJaw = lowerJaw;
+
+  // Teeth (upper)
+  const teethMat = new T.MeshStandardMaterial({ color: 0xe8e0d0, emissive: 0xffffff, emissiveIntensity: 0.15 });
+  for (let i = 0; i < 5; i++) {
+    const tooth = new T.Mesh(new T.ConeGeometry(2.5, 10, 4), teethMat);
+    tooth.position.set(92 + i * 7, 42, (i % 2 === 0 ? -7 : 7));
+    tooth.rotation.z = Math.PI;
+    group.add(tooth);
+  }
+
+  // Eyes
+  const eyeMat = new T.MeshStandardMaterial({ color: 0xffd86b, emissive: 0xffaa00, emissiveIntensity: 1.8 });
+  const pupilMat = new T.MeshStandardMaterial({ color: 0x110000, emissive: 0xff0000, emissiveIntensity: 0.3 });
+  [[76, 60, -12], [76, 60, 12]].forEach(pos => {
+    const eye = new T.Mesh(new T.SphereGeometry(5, 8, 6), eyeMat);
+    eye.position.set(pos[0], pos[1], pos[2]);
+    group.add(eye);
+    const pupil = new T.Mesh(new T.SphereGeometry(2.5, 6, 4), pupilMat);
+    pupil.position.set(pos[0] + 3, pos[1], pos[2]);
+    group.add(pupil);
+  });
+
+  // Horns
+  [[-1, 1], [1, 1]].forEach(([side, _]) => {
+    const horn = new T.Mesh(new T.ConeGeometry(4, 32, 6), boneMat);
+    horn.position.set(68, 68, side * 14);
+    horn.rotation.z = -0.4 * side;
+    horn.rotation.x = 0.15 * side;
+    group.add(horn);
+  });
+
+  // Dorsal spikes along back
+  for (let i = 0; i < 8; i++) {
+    const spike = new T.Mesh(new T.ConeGeometry(3, 18 + i * 1.5, 4), new T.MeshStandardMaterial({ color: 0x8b0000, emissive: glowColor, emissiveIntensity: 0.15 }));
+    spike.position.set(-80 + i * 22, 50 + i * 1.5, 0);
+    group.add(spike);
+  }
+
+  // Tail
+  for (let i = 0; i < 6; i++) {
+    const tailSeg = new T.Mesh(new T.SphereGeometry(18 - i * 2.5, 8, 6), bodyMat);
+    tailSeg.position.set(-100 - i * 26, 24 - i * 2, Math.sin(i * 0.8) * 14);
+    group.add(tailSeg);
+  }
+  const tailTip = new T.Mesh(new T.ConeGeometry(4, 16, 4), new T.MeshStandardMaterial({ color: 0x8b0000, emissive: glowColor, emissiveIntensity: 0.4 }));
+  tailTip.position.set(-256, 12, Math.sin(4.8) * 14);
+  tailTip.rotation.z = Math.PI / 2;
+  group.add(tailTip);
+
+  // Wings (large triangular membranes)
+  for (const side of [-1, 1]) {
+    const wingGeo = new T.BufferGeometry();
+    wingGeo.setAttribute("position", new T.Float32BufferAttribute([
+      0, 0, 0,  -60, 30, side * 110,  -30, -6, side * 30,
+      -60, 30, side * 110,  -100, 18, side * 80,  -30, -6, side * 30,
+    ], 3));
+    wingGeo.computeVertexNormals();
+    const wing = new T.Mesh(wingGeo, wingMat);
+    wing.position.set(-20, 48, 0);
+    group.add(wing);
+    if (side === 1) group._wingR = wing;
+    else group._wingL = wing;
+  }
+
+  // Fire breath glow (always-on point light at mouth)
+  const fireLight = new T.PointLight(isEscapeDragon ? 0xff4400 : 0xff3366, 0.8, 300);
+  fireLight.position.set(120, 46, 0);
+  group.add(fireLight);
+  group._fireLight = fireLight;
+
+  group.scale.setScalar(s);
+  return group;
+}
+
+function createHazardMesh3D(hazard) {
+  if (!window.THREE || !hazard) return null;
+  const T = window.THREE;
+  const ctor = hazard.constructor ? hazard.constructor.name : "";
+  let mesh;
+  if (ctor === "MergeConflict") {
+    mesh = new T.Mesh(
+      new T.BoxGeometry(28, 28, 28),
+      new T.MeshStandardMaterial({ color: 0xff4d6d, emissive: 0xff4d6d, emissiveIntensity: 0.55, transparent: true, opacity: 0.72 })
+    );
+    mesh.position.y = 16;
+  } else if (ctor === "PlaceboPill") {
+    mesh = new T.Mesh(
+      new T.CapsuleGeometry(8, 24, 4, 8),
+      new T.MeshStandardMaterial({ color: 0xffcc00, emissive: 0xffcc00, emissiveIntensity: 0.45, transparent: true, opacity: 0.82 })
+    );
+    mesh.position.y = 13;
+    mesh.rotation.z = Math.PI / 2;
+  } else if (ctor === "DoubleBlindCloud") {
+    mesh = new T.Mesh(
+      new T.SphereGeometry(Math.max(18, hazard.r * 0.45), 16, 10),
+      new T.MeshStandardMaterial({ color: 0xbd57ff, emissive: 0xbd57ff, emissiveIntensity: 0.5, transparent: true, opacity: 0.32 })
+    );
+    mesh.position.y = 22;
+  } else if (ctor === "RegulatoryProjectile") {
+    mesh = new T.Mesh(
+      new T.OctahedronGeometry(hazard.enraged ? 18 : 14),
+      new T.MeshStandardMaterial({ color: hazard.enraged ? 0xff7a18 : 0xff3366, emissive: hazard.enraged ? 0xff7a18 : 0xff3366, emissiveIntensity: 0.85 })
+    );
+    mesh.position.y = 18;
+  } else if (ctor === "DossierProjectile") {
+    const docGroup = new T.Group();
+    const page = new T.Mesh(
+      new T.BoxGeometry(16, 20, 2),
+      new T.MeshStandardMaterial({ color: 0x57f2ff, emissive: 0x57f2ff, emissiveIntensity: 0.7, transparent: true, opacity: 0.85 })
+    );
+    docGroup.add(page);
+    const fold = new T.Mesh(
+      new T.BoxGeometry(6, 6, 3),
+      new T.MeshStandardMaterial({ color: 0x3ad0ee, emissive: 0x57f2ff, emissiveIntensity: 0.4 })
+    );
+    fold.position.set(-5, 7, 1);
+    docGroup.add(fold);
+    docGroup.position.y = 14;
+    mesh = docGroup;
+  } else {
+    mesh = new T.Mesh(
+      new T.BoxGeometry(20, 6, 26),
+      new T.MeshStandardMaterial({ color: 0x57f2ff, emissive: 0x57f2ff, emissiveIntensity: 0.5, transparent: true, opacity: 0.8 })
+    );
+    mesh.position.y = 12;
+  }
+  mesh._hazardRef = hazard;
+  return mesh;
 }
 
 function buildAllKartModels() {
@@ -10461,6 +10840,17 @@ function sync3DScene(time) {
     model.position.set(kart.x, 0, kart.y);
     model.rotation.y = -kart.heading + Math.PI / 2;
 
+    // Wheel spin based on speed
+    if (model._wheels) {
+      const spinRate = kart.speed() * 0.15;
+      model._wheels.forEach(w => { w.rotation.x += spinRate; });
+    }
+
+    // Lean into turns (subtle body roll)
+    const lateralV = kart.vx * Math.sin(kart.heading) - kart.vy * Math.cos(kart.heading);
+    const targetLean = clamp(lateralV * 0.04, -0.18, 0.18);
+    model.rotation.z = model.rotation.z * 0.85 + targetLean * 0.15;
+
     // Spinout rotation
     if (kart.spinoutTimer > 0) {
       model.rotation.y += kart.spinAngle;
@@ -10475,8 +10865,18 @@ function sync3DScene(time) {
     if (kart.boostTimer > 0) {
       model.children[0].material.emissive = model.children[0].material.color;
       model.children[0].material.emissiveIntensity = 0.4 + 0.3 * Math.sin(time * 0.01);
+      if (model._flameMat && model._flame) {
+        model._flame.visible = true;
+        model._flameMat.opacity = 0.65 + 0.25 * Math.sin(time * 0.03);
+        const flameScale = 1 + 0.2 * Math.sin(time * 0.05);
+        model._flame.scale.set(flameScale, flameScale, 1 + Math.min(0.8, kart.speed() * 0.08));
+      }
     } else {
       model.children[0].material.emissiveIntensity = 0;
+      if (model._flameMat && model._flame) {
+        model._flame.visible = false;
+        model._flameMat.opacity = 0;
+      }
     }
   }
 
@@ -10488,11 +10888,11 @@ function sync3DScene(time) {
   const camHeight = 70 + sp * 5;
   const lookAhead = 60 + sp * 15;
 
-  const targetX = pk.x - fy * camDist;
-  const targetZ = pk.y + fx * camDist;
+  const targetX = pk.x - fx * camDist;
+  const targetZ = pk.y - fy * camDist;
   const targetY = camHeight;
-  const lookX = pk.x + fy * lookAhead;
-  const lookZ = pk.y - fx * lookAhead;
+  const lookX = pk.x + fx * lookAhead;
+  const lookZ = pk.y + fy * lookAhead;
   const lookY = 12;
 
   const cs = THREE_STATE.camSmooth;
@@ -10524,8 +10924,10 @@ function sync3DScene(time) {
 
   // Rotate item boxes
   THREE_STATE.itemMeshes.forEach(m => {
-    if (m._itemRef && m._itemRef.collected) { m.visible = false; return; }
-    m.rotation.y = time * 0.002;
+    if (m._itemRef && !m._itemRef.active) { m.visible = false; return; }
+    m.visible = true;
+    m.rotation.y = (m._itemRef?.spin || 0) + time * 0.002;
+    m.rotation.x = Math.sin(time * 0.004 + m.position.x) * 0.4;
     m.position.y = 12 + Math.sin(time * 0.003 + m.position.x) * 3;
   });
 
@@ -10533,7 +10935,122 @@ function sync3DScene(time) {
   THREE_STATE.coinMeshes.forEach(m => {
     if (m._coinRef && m._coinRef.collected) { m.visible = false; return; }
     m.rotation.y = time * 0.004;
+    m.rotation.x = Math.PI / 2;
+    m.position.y = 9 + Math.sin(time * 0.004 + m.position.x) * 2;
   });
+
+  THREE_STATE.boostPadMeshes.forEach(m => {
+    const pulse = 0.55 + 0.35 * Math.sin(time * 0.01 + m.position.x * 0.01);
+    if (m.material) m.material.emissiveIntensity = pulse;
+    m.position.y = 2 + pulse * 0.8;
+  });
+
+  THREE_STATE.movingObjectMeshes.forEach(m => {
+    const obj = m._movingObjectRef;
+    if (!obj) return;
+    m.position.set(obj.x, 24 + Math.sin(time * 0.01 + obj.idx) * 4, obj.y);
+    m.rotation.y = -(obj.ang || 0) + Math.PI / 2;
+    if (m.material) m.material.emissiveIntensity = 0.45 + 0.25 * Math.sin(time * 0.012 + obj.idx);
+  });
+
+  // Merge request tethers (3D lines between karts)
+  if (THREE_STATE._tethers) {
+    THREE_STATE._tethers.forEach(t => THREE_STATE.scene.remove(t));
+  }
+  THREE_STATE._tethers = [];
+  if (window.THREE) {
+    const T = window.THREE;
+    for (const kart of getActiveKarts()) {
+      if (!kart || !kart.mergePullTimer || kart.mergePullTimer <= 0) continue;
+      const target = kart.mergePullTarget || (kart.mergePullTargetId ? getKartById(kart.mergePullTargetId) : null);
+      if (!target) continue;
+      const pts = [new T.Vector3(kart.x, 12, kart.y), new T.Vector3(target.x, 12, target.y)];
+      const lineGeo = new T.BufferGeometry().setFromPoints(pts);
+      const lineMat = new T.LineBasicMaterial({ color: 0x39ff14, linewidth: 2 });
+      const line = new T.Line(lineGeo, lineMat);
+      THREE_STATE.scene.add(line);
+      THREE_STATE._tethers.push(line);
+    }
+  }
+
+  // Move back light behind player
+  if (THREE_STATE.backLight && pk) {
+    THREE_STATE.backLight.position.set(pk.x - fx * 80, 60, pk.y - fy * 80);
+  }
+
+  syncHazards3D(time);
+  syncDragons3D(time);
+}
+
+function syncHazards3D(time) {
+  if (!THREE_STATE.scene || !window.THREE) return;
+  const live = new Set(game.hazards || []);
+  for (const hazard of live) {
+    if (!hazard || hazard.active === false) continue;
+    let mesh = THREE_STATE.hazardMeshes.get(hazard);
+    if (!mesh) {
+      mesh = createHazardMesh3D(hazard);
+      if (!mesh) continue;
+      THREE_STATE.scene.add(mesh);
+      THREE_STATE.hazardMeshes.set(hazard, mesh);
+    }
+    mesh.visible = true;
+    mesh.position.x = hazard.x;
+    mesh.position.z = hazard.y;
+    mesh.rotation.y = -(hazard.heading || 0) + Math.PI / 2 + (hazard.spin || 0);
+    mesh.rotation.x += 0.03;
+    if (hazard.constructor?.name === "DoubleBlindCloud") {
+      const a = clamp((hazard.life || 240) / 240, 0, 1);
+      mesh.scale.setScalar(1 + Math.sin(time * 0.006 + hazard.phase) * 0.08);
+      if (mesh.material) mesh.material.opacity = 0.18 + 0.22 * a;
+    }
+  }
+  for (const [hazard, mesh] of THREE_STATE.hazardMeshes) {
+    if (!live.has(hazard) || hazard.active === false) {
+      THREE_STATE.scene.remove(mesh);
+      dispose3DObject(mesh);
+      THREE_STATE.hazardMeshes.delete(hazard);
+    }
+  }
+}
+
+function animateDragonModel(model, wingPhase, jawPhase, enraged, time) {
+  if (!model) return;
+  const wingAmp = enraged ? 0.55 : 0.38;
+  if (model._wingR) model._wingR.rotation.x = Math.sin(wingPhase) * wingAmp;
+  if (model._wingL) model._wingL.rotation.x = -Math.sin(wingPhase) * wingAmp;
+  if (model._lowerJaw) {
+    const jawOpen = (enraged ? 6 : 4) * Math.max(0, Math.sin(jawPhase));
+    model._lowerJaw.position.y = 38 - jawOpen;
+  }
+  if (model._fireLight) {
+    model._fireLight.intensity = enraged ? 1.2 + 0.6 * Math.sin(time * 0.012) : 0.5 + 0.3 * Math.sin(time * 0.008);
+  }
+}
+
+function syncDragons3D(time) {
+  if (!THREE_STATE.scene) return;
+  const dragon = game.track && game.track.regulatoryDragon;
+  if (THREE_STATE.dragonModel) {
+    THREE_STATE.dragonModel.visible = !!(dragon && dragon.active);
+    if (dragon && dragon.active) {
+      THREE_STATE.dragonModel.position.set(dragon.x, 0, dragon.y);
+      THREE_STATE.dragonModel.rotation.y = -dragon.heading + Math.PI / 2;
+      const scale = dragon.enraged ? 1.32 : 1.15;
+      THREE_STATE.dragonModel.scale.setScalar(scale);
+      animateDragonModel(THREE_STATE.dragonModel, dragon.wingPhase || time * 0.004, dragon.jawPhase || time * 0.006, dragon.enraged, time);
+    }
+  }
+
+  if (THREE_STATE.dragonEscapeModel && game.player) {
+    const pKart = game.player;
+    const chaseX = pKart.x - 220 - clamp(game.raceTime * 9, 0, 600);
+    const bob = Math.sin(time * 0.002) * 30;
+    THREE_STATE.dragonEscapeModel.visible = MAPS[game.selectedMapIdx || 0].id === "dragon_escape";
+    THREE_STATE.dragonEscapeModel.position.set(chaseX, 0, pKart.y - 80 + bob);
+    THREE_STATE.dragonEscapeModel.rotation.y = Math.PI / 2 + Math.sin(time * 0.0015) * 0.2;
+    animateDragonModel(THREE_STATE.dragonEscapeModel, time * 0.007, time * 0.009, game.raceTime > 30, time);
+  }
 }
 
 function draw3D(time) {
