@@ -1003,9 +1003,12 @@ const TUNING = {
   // P2P sync
   P2P_MAX_BUFFERED_BYTES: 64 * 1024,
   P2P_PICKUP_FULL_SYNC_INTERVAL_MS: 1200,
-  P2P_REMOTE_INTERP: 0.55,
+  P2P_HOST_SYNC_HZ: 18,
+  P2P_GUEST_SYNC_HZ: 20,
+  P2P_HAZARD_SYNC_HZ: 6,
+  P2P_REMOTE_INTERP: 0.25,
   P2P_REMOTE_SNAP_DIST: 240,
-  P2P_REMOTE_VELOCITY_LEAD: 1.5,
+  P2P_REMOTE_VELOCITY_LEAD: 3.0,
 };
 
 // ---- Character Configurations ----
@@ -5950,8 +5953,12 @@ class ParticleSystem {
 /* ============================================================
    MERGE CONFLICT HAZARD
    ============================================================ */
+let _hazardIdCounter = 0;
+function nextHazardId() { return ++_hazardIdCounter; }
+
 class MergeConflict {
   constructor(x, y) {
+    this.hid = nextHazardId();
     this.x = x;
     this.y = y;
     this.r = 15;
@@ -5992,6 +5999,7 @@ class MergeConflict {
 
 class PlaceboPill {
   constructor(x, y, owner = null) {
+    this.hid = nextHazardId();
     this.x = x;
     this.y = y;
     this.owner = owner;
@@ -6032,6 +6040,7 @@ class PlaceboPill {
 
 class DoubleBlindCloud {
   constructor(x, y, heading, owner) {
+    this.hid = nextHazardId();
     this.x = x;
     this.y = y;
     this.owner = owner;
@@ -6079,6 +6088,7 @@ class DoubleBlindCloud {
    ============================================================ */
 class RegulatoryProjectile {
   constructor(x, y, heading, speed = 8.4, enraged = false) {
+    this.hid = nextHazardId();
     this.x = x;
     this.y = y;
     this.heading = heading;
@@ -6136,6 +6146,7 @@ class RegulatoryProjectile {
    ============================================================ */
 class DossierProjectile {
   constructor(x, y, heading, owner) {
+    this.hid = nextHazardId();
     this.x = x;
     this.y = y;
     this.heading = heading;
@@ -6146,8 +6157,8 @@ class DossierProjectile {
     this.r = 12;
     this.spin = Math.random() * Math.PI * 2;
     this.active = true;
-    this.life = 360; // 6 seconds
-    this.ignoreOwnerTimer = 20; // ~0.33 seconds
+    this.life = 360;
+    this.ignoreOwnerTimer = 20;
   }
 
   update(dt, track) {
@@ -6225,6 +6236,7 @@ class DossierProjectile {
    ============================================================ */
 class DragonFire {
   constructor(x, y, heading, speed) {
+    this.hid = nextHazardId();
     this.x = x;
     this.y = y;
     this.heading = heading;
@@ -6233,7 +6245,7 @@ class DragonFire {
     this.vy = Math.sin(heading) * this.speed;
     this.r = 18;
     this.active = true;
-    this.life = 420; // 7 seconds
+    this.life = 420;
     this.pulsePhase = Math.random() * Math.PI * 2;
     this.sizePhase = 0;
   }
@@ -7657,6 +7669,11 @@ const game = {
   dragonWarnTimer: 0,
   bestLap: 0,
   p2pLastPickupSyncAt: 0,
+  p2pLastHostSyncAt: 0,
+  p2pLastGuestSyncAt: 0,
+  p2pLastHazardSyncAt: 0,
+  p2pPing: 0,
+  p2pLastPingAt: 0,
 };
 
 function triggerHitFlash(text, color, duration = 90, kart = null) {
@@ -8475,6 +8492,10 @@ function buildRace() {
   game.dragonFireTimer = 0;
   game.dragonWarnTimer = 60; // First warning after about 1 second
   game.p2pLastPickupSyncAt = 0;
+  game.p2pLastHostSyncAt = 0;
+  game.p2pLastGuestSyncAt = 0;
+  game.p2pLastHazardSyncAt = 0;
+  _hazardIdCounter = 0;
 
   // Set music style based on map
   const mapId = MAPS[game.selectedMapIdx || 0].id;
@@ -9336,6 +9357,20 @@ function update(dt, time) {
       }
     }
 
+    if (game.p2pMode) {
+      const allRemote = [
+        ...(game.remotePlayers || []),
+        ...(game.p2pRole === "guest" ? game.ais : []),
+      ];
+      if (game.p2pRole === "guest" && game.player2) allRemote.push(game.player2);
+      for (const rk of allRemote) {
+        if (rk._lastSyncAt && !rk.finished && !rk.eliminated) {
+          rk.x += rk.vx * dt;
+          rk.y += rk.vy * dt;
+        }
+      }
+    }
+
     if (game.p2pMode && game.remotePlayers) {
       for (const remote of game.remotePlayers) {
         if (remote.quoteTimer > 0) remote.quoteTimer -= dt;
@@ -9682,10 +9717,23 @@ function update(dt, time) {
     }
 
     if (game.p2pMode) {
+      const now = performance.now();
       if (game.p2pRole === "host") {
-        sendHostSync();
+        const hostInterval = 1000 / TUNING.P2P_HOST_SYNC_HZ;
+        if (now - game.p2pLastHostSyncAt >= hostInterval) {
+          game.p2pLastHostSyncAt = now;
+          sendHostSync();
+        }
       } else {
-        sendGuestSync();
+        const guestInterval = 1000 / TUNING.P2P_GUEST_SYNC_HZ;
+        if (now - game.p2pLastGuestSyncAt >= guestInterval) {
+          game.p2pLastGuestSyncAt = now;
+          sendGuestSync();
+        }
+      }
+      if (now - game.p2pLastPingAt >= 2000) {
+        game.p2pLastPingAt = now;
+        sendP2pMessage({ type: "ping", t: now });
       }
     }
   }
@@ -10208,6 +10256,10 @@ function init3DScene() {
   THREE_STATE.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
   THREE_STATE.renderer.setSize(VIEW_W, VIEW_H);
   THREE_STATE.renderer.setClearColor(0x060514);
+  THREE_STATE.renderer.toneMapping = T.ACESFilmicToneMapping;
+  THREE_STATE.renderer.toneMappingExposure = 1.15;
+  THREE_STATE.renderer.shadowMap.enabled = true;
+  THREE_STATE.renderer.shadowMap.type = T.PCFSoftShadowMap;
 
   THREE_STATE.scene = new T.Scene();
   THREE_STATE.scene.fog = new T.FogExp2(0x060514, 0.0004);
@@ -10215,33 +10267,49 @@ function init3DScene() {
   THREE_STATE.camera = new T.PerspectiveCamera(70, VIEW_W / VIEW_H, 1, 8000);
   THREE_STATE.camera.position.set(0, 120, -200);
 
-  // Lighting -- hemisphere for rich ambient, directional for depth, point light follows player
-  const hemiLight = new T.HemisphereLight(0x1a1040, 0x0a1f0d, 0.65);
+  const hemiLight = new T.HemisphereLight(0x2a1860, 0x0a2f12, 0.8);
   THREE_STATE.scene.add(hemiLight);
-  const ambient = new T.AmbientLight(0x1a1040, 0.45);
+  const ambient = new T.AmbientLight(0x1a1040, 0.35);
   THREE_STATE.scene.add(ambient);
-  const dirLight = new T.DirectionalLight(0x8888ff, 0.7);
-  dirLight.position.set(200, 500, -200);
+  const dirLight = new T.DirectionalLight(0x9999ff, 0.9);
+  dirLight.position.set(300, 600, -300);
+  dirLight.castShadow = true;
+  dirLight.shadow.mapSize.width = 1024;
+  dirLight.shadow.mapSize.height = 1024;
+  dirLight.shadow.camera.near = 10;
+  dirLight.shadow.camera.far = 2000;
+  dirLight.shadow.camera.left = -600;
+  dirLight.shadow.camera.right = 600;
+  dirLight.shadow.camera.top = 600;
+  dirLight.shadow.camera.bottom = -600;
+  dirLight.shadow.bias = -0.002;
   THREE_STATE.scene.add(dirLight);
-  const pointLight = new T.PointLight(0x57f2ff, 0.7, 2500);
+  THREE_STATE.scene.add(dirLight.target);
+  THREE_STATE.dirLight = dirLight;
+  const pointLight = new T.PointLight(0x57f2ff, 0.9, 3000);
   pointLight.position.set(0, 200, 0);
   THREE_STATE.scene.add(pointLight);
   THREE_STATE.playerLight = pointLight;
-  const backLight = new T.PointLight(0xff4d6d, 0.25, 1500);
+  const backLight = new T.PointLight(0xff4d6d, 0.35, 1800);
   backLight.position.set(0, 100, 0);
   THREE_STATE.scene.add(backLight);
   THREE_STATE.backLight = backLight;
+  const rimLight = new T.PointLight(0xfd9927, 0.3, 2000);
+  rimLight.position.set(-200, 150, 200);
+  THREE_STATE.scene.add(rimLight);
+  THREE_STATE.rimLight = rimLight;
 
   // Ground plane
   const groundGeo = new T.PlaneGeometry(12000, 12000);
   const groundMat = new T.MeshStandardMaterial({
     color: 0x0a1f0d,
-    roughness: 0.9,
-    metalness: 0.1,
+    roughness: 0.85,
+    metalness: 0.15,
   });
   const ground = new T.Mesh(groundGeo, groundMat);
   ground.rotation.x = -Math.PI / 2;
   ground.position.y = -1;
+  ground.receiveShadow = true;
   THREE_STATE.scene.add(ground);
   THREE_STATE.groundMesh = ground;
 
@@ -10250,7 +10318,7 @@ function init3DScene() {
   const gridDiv = 100;
   const grid = new T.GridHelper(gridSize, gridDiv, 0x7b75ff, 0x1a1040);
   grid.position.y = -0.5;
-  grid.material.opacity = 0.15;
+  grid.material.opacity = 0.22;
   grid.material.transparent = true;
   THREE_STATE.scene.add(grid);
 
@@ -10268,7 +10336,7 @@ function init3DScene() {
   }
   const starGeo = new T.BufferGeometry();
   starGeo.setAttribute("position", new T.Float32BufferAttribute(starVerts, 3));
-  const starMat = new T.PointsMaterial({ color: 0xffffff, size: 3, sizeAttenuation: false, transparent: true, opacity: 0.6 });
+  const starMat = new T.PointsMaterial({ color: 0xeeeeff, size: 3.5, sizeAttenuation: false, transparent: true, opacity: 0.75 });
   THREE_STATE.scene.add(new T.Points(starGeo, starMat));
 
   // HUD overlay canvas
@@ -10395,15 +10463,16 @@ function rebuild3DTrack() {
   geo.computeVertexNormals();
 
   const roadMat = new T.MeshStandardMaterial({
-    color: 0x0d0b21,
-    emissive: 0x050310,
-    emissiveIntensity: 0.15,
-    roughness: 0.5,
-    metalness: 0.5,
+    color: 0x0e0c24,
+    emissive: 0x060414,
+    emissiveIntensity: 0.2,
+    roughness: 0.4,
+    metalness: 0.6,
     vertexColors: false,
   });
   THREE_STATE.trackMesh = new T.Mesh(geo, roadMat);
   THREE_STATE.trackMesh.position.y = 0.5;
+  THREE_STATE.trackMesh.receiveShadow = true;
   group.add(THREE_STATE.trackMesh);
 
   // Rumble strip (slightly wider road with alternating colors)
@@ -10523,102 +10592,109 @@ function rebuild3DTrack() {
     group.add(centerLine);
   }
 
-  // Start/finish arch gate (for closed circuits)
   if (!game.track.isOpen && edges.length > 1) {
     const e = edges[0];
     const archW = Math.hypot(e.left.x - e.right.x, e.left.y - e.right.y);
-    const archH = 40;
+    const archH = 45;
     const archGroup = new T.Group();
-    const archMat = new T.MeshStandardMaterial({ color: 0xffd86b, emissive: 0xffd86b, emissiveIntensity: 0.5, metalness: 0.7, roughness: 0.3 });
-    // Left pillar
-    const pillarGeo = new T.BoxGeometry(4, archH, 4);
+    const archMat = new T.MeshStandardMaterial({ color: 0xffd86b, emissive: 0xffd86b, emissiveIntensity: 0.6, metalness: 0.8, roughness: 0.2 });
+    const pillarGeo = new T.CylinderGeometry(2.5, 3, archH, 10);
     const lp = new T.Mesh(pillarGeo, archMat);
     lp.position.set(e.left.x, archH / 2, e.left.y);
+    lp.castShadow = true;
     archGroup.add(lp);
-    // Right pillar
     const rp = new T.Mesh(pillarGeo, archMat);
     rp.position.set(e.right.x, archH / 2, e.right.y);
+    rp.castShadow = true;
     archGroup.add(rp);
-    // Top beam
     const beamLen = archW;
-    const beamGeo = new T.BoxGeometry(beamLen, 4, 6);
+    const beamGeo = new T.BoxGeometry(beamLen, 5, 7);
     const beam = new T.Mesh(beamGeo, archMat);
     beam.position.set((e.left.x + e.right.x) / 2, archH, (e.left.y + e.right.y) / 2);
     beam.rotation.y = -Math.atan2(e.left.y - e.right.y, e.left.x - e.right.x);
+    beam.castShadow = true;
     archGroup.add(beam);
-    // Checkered banner under beam
-    const bannerGeo = new T.PlaneGeometry(beamLen * 0.9, 8);
-    const bannerMat = new T.MeshStandardMaterial({ color: 0xffffff, emissive: 0xffd86b, emissiveIntensity: 0.3, side: T.DoubleSide });
+    const bannerGeo = new T.PlaneGeometry(beamLen * 0.9, 10);
+    const bannerMat = new T.MeshStandardMaterial({ color: 0xffffff, emissive: 0xffd86b, emissiveIntensity: 0.4, side: T.DoubleSide, transparent: true, opacity: 0.9 });
     const banner = new T.Mesh(bannerGeo, bannerMat);
-    banner.position.set((e.left.x + e.right.x) / 2, archH - 6, (e.left.y + e.right.y) / 2);
+    banner.position.set((e.left.x + e.right.x) / 2, archH - 7, (e.left.y + e.right.y) / 2);
     banner.rotation.y = -Math.atan2(e.left.y - e.right.y, e.left.x - e.right.x);
     archGroup.add(banner);
+    const archLight = new T.PointLight(0xffd86b, 0.6, 150);
+    archLight.position.set((e.left.x + e.right.x) / 2, archH + 5, (e.left.y + e.right.y) / 2);
+    archGroup.add(archLight);
     group.add(archGroup);
   }
 
   // Build kart models for all active karts
   buildAllKartModels();
 
-  // Item boxes (large neon hypercube with inner diamond)
   if (game.track.itemBoxes) {
     game.track.itemBoxes.forEach(ib => {
       const boxGroup = new T.Group();
-      // Outer wireframe cube (2x bigger)
-      const outerGeo = new T.BoxGeometry(36, 36, 36);
+      const outerGeo = new T.DodecahedronGeometry(22, 0);
       const outerMat = new T.MeshStandardMaterial({
         color: 0xffd86b,
         emissive: 0xffd86b,
-        emissiveIntensity: 0.6,
+        emissiveIntensity: 0.7,
         transparent: true,
-        opacity: 0.35,
+        opacity: 0.3,
         wireframe: true,
       });
       boxGroup.add(new T.Mesh(outerGeo, outerMat));
-      // Inner solid diamond (2x bigger)
-      const innerGeo = new T.OctahedronGeometry(16);
+      const midGeo = new T.IcosahedronGeometry(19, 0);
+      const midMat = new T.MeshStandardMaterial({
+        color: 0xffd86b,
+        emissive: 0xffd86b,
+        emissiveIntensity: 0.4,
+        transparent: true,
+        opacity: 0.15,
+        wireframe: true,
+      });
+      boxGroup.add(new T.Mesh(midGeo, midMat));
+      const innerGeo = new T.OctahedronGeometry(12, 1);
       const innerMat = new T.MeshStandardMaterial({
         color: 0xffffff,
         emissive: 0xffd86b,
-        emissiveIntensity: 0.9,
+        emissiveIntensity: 1.0,
         transparent: true,
-        opacity: 0.85,
+        opacity: 0.9,
+        metalness: 0.4,
+        roughness: 0.2,
       });
       boxGroup.add(new T.Mesh(innerGeo, innerMat));
-      // Question mark indicator (flat box with "?" feel)
-      const qMat = new T.MeshStandardMaterial({ color: 0xffd86b, emissive: 0xffd86b, emissiveIntensity: 1.2 });
-      const qDot = new T.Mesh(new T.BoxGeometry(4, 4, 4), qMat);
+      const qMat = new T.MeshStandardMaterial({ color: 0xffd86b, emissive: 0xffd86b, emissiveIntensity: 1.5 });
+      const qDot = new T.Mesh(new T.SphereGeometry(2.5, 8, 6), qMat);
       qDot.position.y = -8;
       boxGroup.add(qDot);
-      const qCurve = new T.Mesh(new T.BoxGeometry(4, 10, 4), qMat);
+      const qCurve = new T.Mesh(new T.CylinderGeometry(1.5, 1.5, 10, 8), qMat);
       qCurve.position.y = 2;
       boxGroup.add(qCurve);
-      // Point light inside (stronger)
-      const boxLight = new T.PointLight(0xffd86b, 0.7, 120);
+      const boxLight = new T.PointLight(0xffd86b, 0.9, 140);
       boxGroup.add(boxLight);
       boxGroup.position.set(ib.x, 22, ib.y);
       boxGroup._itemRef = ib;
       boxGroup._innerMat = innerMat;
       boxGroup._outerMat = outerMat;
+      boxGroup._midMat = midMat;
+      boxGroup.castShadow = true;
       group.add(boxGroup);
       THREE_STATE.itemMeshes.push(boxGroup);
     });
   }
 
-  // Boost pads (glowing chevron arrows on the road)
   if (game.track.boostPads) {
     game.track.boostPads.forEach(bp => {
       const padGroup = new T.Group();
       const pw = bp.h || 36;
       const ph = bp.w || 70;
-      // Base pad
       const padGeo = new T.BoxGeometry(pw, 1.5, ph);
       const padMat = new T.MeshStandardMaterial({
-        color: 0xa4ff80, emissive: 0xa4ff80, emissiveIntensity: 0.5,
-        transparent: true, opacity: 0.5,
+        color: 0xa4ff80, emissive: 0xa4ff80, emissiveIntensity: 0.6,
+        transparent: true, opacity: 0.55, metalness: 0.3, roughness: 0.4,
       });
       padGroup.add(new T.Mesh(padGeo, padMat));
-      // Chevron arrows pointing forward (+Z in local space = travel direction)
-      const arrowMat = new T.MeshStandardMaterial({ color: 0xffffff, emissive: 0xa4ff80, emissiveIntensity: 1.2, transparent: true, opacity: 0.8, side: T.DoubleSide });
+      const arrowMat = new T.MeshStandardMaterial({ color: 0xffffff, emissive: 0xa4ff80, emissiveIntensity: 1.5, transparent: true, opacity: 0.85, side: T.DoubleSide });
       for (let a = 0; a < 3; a++) {
         const hw = pw * 0.35;
         const arrowGeo = new T.BufferGeometry();
@@ -10632,15 +10708,16 @@ function rebuild3DTrack() {
         arrow.position.y = 1.2;
         padGroup.add(arrow);
       }
-      // Side glow bars along the pad edges
-      const barMat = new T.MeshStandardMaterial({ color: 0xa4ff80, emissive: 0xa4ff80, emissiveIntensity: 0.9 });
+      const barMat = new T.MeshStandardMaterial({ color: 0xa4ff80, emissive: 0xa4ff80, emissiveIntensity: 1.1 });
       for (const s of [-1, 1]) {
-        const bar = new T.Mesh(new T.BoxGeometry(2, 2.5, ph + 4), barMat);
+        const bar = new T.Mesh(new T.BoxGeometry(2, 3, ph + 4), barMat);
         bar.position.x = s * (pw / 2 + 1);
         bar.position.y = 1.5;
         padGroup.add(bar);
       }
-      // The pad's local +Z should point along bp.ang (travel direction)
+      const padLight = new T.PointLight(0xa4ff80, 0.3, 60);
+      padLight.position.y = 5;
+      padGroup.add(padLight);
       padGroup.position.set(bp.x, 1.5, bp.y);
       padGroup.rotation.y = -bp.ang + Math.PI / 2;
       padGroup._boostPadRef = bp;
@@ -10650,25 +10727,34 @@ function rebuild3DTrack() {
     });
   }
 
-  // Coins (gold disc with embossed center ring)
   if (game.track.coins) {
     game.track.coins.forEach(c => {
       if (c.collected) return;
       const coinGroup = new T.Group();
-      const discGeo = new T.CylinderGeometry(6, 6, 1.8, 12);
+      const discGeo = new T.CylinderGeometry(6, 6, 1.8, 20);
       const discMat = new T.MeshStandardMaterial({
         color: 0xffd86b,
         emissive: 0xffd86b,
-        emissiveIntensity: 0.4,
-        metalness: 0.9,
-        roughness: 0.15,
+        emissiveIntensity: 0.5,
+        metalness: 0.95,
+        roughness: 0.08,
       });
-      coinGroup.add(new T.Mesh(discGeo, discMat));
-      const ringGeo = new T.TorusGeometry(4, 0.6, 6, 12);
-      const ringMat = new T.MeshStandardMaterial({ color: 0xa87a13, metalness: 0.95, roughness: 0.1 });
+      const disc = new T.Mesh(discGeo, discMat);
+      disc.castShadow = true;
+      coinGroup.add(disc);
+      const ringGeo = new T.TorusGeometry(4.5, 0.5, 8, 20);
+      const ringMat = new T.MeshStandardMaterial({ color: 0xb8871a, metalness: 0.95, roughness: 0.05 });
       const ring = new T.Mesh(ringGeo, ringMat);
       ring.rotation.x = Math.PI / 2;
       coinGroup.add(ring);
+      const innerRing = new T.Mesh(new T.TorusGeometry(2.5, 0.3, 6, 16), ringMat);
+      innerRing.rotation.x = Math.PI / 2;
+      coinGroup.add(innerRing);
+      const starGeo = new T.OctahedronGeometry(1.2);
+      const starMesh = new T.Mesh(starGeo, new T.MeshStandardMaterial({ color: 0xffffff, emissive: 0xffd86b, emissiveIntensity: 1.0 }));
+      coinGroup.add(starMesh);
+      const coinLight = new T.PointLight(0xffd86b, 0.2, 30);
+      coinGroup.add(coinLight);
       coinGroup.position.set(c.x, 8, c.y);
       coinGroup._coinRef = c;
       coinGroup._discMat = discMat;
@@ -10677,33 +10763,33 @@ function rebuild3DTrack() {
     });
   }
 
-  // Moving firewall gates (translucent walls with scan lines and warning glow)
   if (game.track.movingObjects) {
     game.track.movingObjects.forEach(obj => {
       const gateGroup = new T.Group();
       const col = new T.Color(obj.color || "#57f2ff");
-      // Main wall panel
       const wallGeo = new T.BoxGeometry(8, 50, 55);
       const wallMat = new T.MeshStandardMaterial({
-        color: col, emissive: col, emissiveIntensity: 0.5,
-        transparent: true, opacity: 0.55, side: T.DoubleSide,
+        color: col, emissive: col, emissiveIntensity: 0.6,
+        transparent: true, opacity: 0.5, side: T.DoubleSide,
       });
       gateGroup.add(new T.Mesh(wallGeo, wallMat));
-      // Wireframe overlay for scan-line effect
-      const wireMat = new T.MeshStandardMaterial({ color: col, emissive: col, emissiveIntensity: 0.8, wireframe: true, transparent: true, opacity: 0.35 });
+      const wireMat = new T.MeshStandardMaterial({ color: col, emissive: col, emissiveIntensity: 0.9, wireframe: true, transparent: true, opacity: 0.4 });
       gateGroup.add(new T.Mesh(new T.BoxGeometry(10, 52, 57), wireMat));
-      // Top and bottom neon bars
-      const barMat = new T.MeshStandardMaterial({ color: col, emissive: col, emissiveIntensity: 1.2 });
+      const hexMat = new T.MeshStandardMaterial({ color: col, emissive: col, emissiveIntensity: 0.5, wireframe: true, transparent: true, opacity: 0.2 });
+      gateGroup.add(new T.Mesh(new T.IcosahedronGeometry(30, 1), hexMat));
+      const barMat = new T.MeshStandardMaterial({ color: col, emissive: col, emissiveIntensity: 1.4 });
       const topBar = new T.Mesh(new T.BoxGeometry(10, 3, 58), barMat);
       topBar.position.y = 26;
       gateGroup.add(topBar);
       const bottomBar = new T.Mesh(new T.BoxGeometry(10, 3, 58), barMat);
       bottomBar.position.y = -24;
       gateGroup.add(bottomBar);
-      // Warning light
-      const wLight = new T.PointLight(col, 0.6, 120);
+      const wLight = new T.PointLight(col, 0.8, 150);
       wLight.position.y = 30;
       gateGroup.add(wLight);
+      const wLight2 = new T.PointLight(col, 0.3, 80);
+      wLight2.position.y = -20;
+      gateGroup.add(wLight2);
       gateGroup.position.set(obj.x, 26, obj.y);
       gateGroup.rotation.y = -(obj.ang || 0) + Math.PI / 2;
       gateGroup._movingObjectRef = obj;
@@ -10723,32 +10809,45 @@ function rebuild3DTrack() {
     sc.add(THREE_STATE.dragonEscapeModel);
   }
 
-  // Holographic pillar decorations along track
   if (game.track.decorations && !game.track.isOpen) {
     const pillarColors = [0x7b75ff, 0xfd9927, 0xff4d6d, 0xa4ff80, 0x57f2ff];
     game.track.decorations.forEach((d, idx) => {
       if (d.isJapanese) return;
       const h = d.h || 50;
       const r = (d.r || 12) * 0.6;
-      const pillarGeo = new T.CylinderGeometry(r * 0.6, r, h, 6);
       const col = pillarColors[idx % pillarColors.length];
+      const pillarGeo = new T.CylinderGeometry(r * 0.5, r, h, 8);
       const pillarMat = new T.MeshStandardMaterial({
         color: col,
         emissive: col,
-        emissiveIntensity: 0.35,
+        emissiveIntensity: 0.4,
         transparent: true,
-        opacity: 0.45,
-        roughness: 0.2,
-        metalness: 0.8,
+        opacity: 0.5,
+        roughness: 0.15,
+        metalness: 0.85,
       });
       const pillar = new T.Mesh(pillarGeo, pillarMat);
       pillar.position.set(d.x, h / 2, d.y);
+      pillar.castShadow = true;
       group.add(pillar);
-      const capGeo = new T.SphereGeometry(r * 0.7, 6, 4);
-      const capMat = new T.MeshStandardMaterial({ color: col, emissive: col, emissiveIntensity: 0.8 });
+      for (let ri = 0; ri < 3; ri++) {
+        const ringY = h * 0.25 + ri * (h * 0.25);
+        const ringR = r * (0.9 - ri * 0.1);
+        const ringGeo = new T.TorusGeometry(ringR, 0.4, 6, 12);
+        const ringMat = new T.MeshStandardMaterial({ color: col, emissive: col, emissiveIntensity: 0.9, transparent: true, opacity: 0.6 });
+        const ring = new T.Mesh(ringGeo, ringMat);
+        ring.position.set(d.x, ringY, d.y);
+        ring.rotation.x = Math.PI / 2;
+        group.add(ring);
+      }
+      const capGeo = new T.SphereGeometry(r * 0.7, 10, 8);
+      const capMat = new T.MeshStandardMaterial({ color: col, emissive: col, emissiveIntensity: 1.0 });
       const cap = new T.Mesh(capGeo, capMat);
       cap.position.set(d.x, h + 2, d.y);
       group.add(cap);
+      const pillarLight = new T.PointLight(col, 0.25, 80);
+      pillarLight.position.set(d.x, h + 5, d.y);
+      group.add(pillarLight);
     });
   }
 
@@ -10769,83 +10868,106 @@ function buildKartModel3D(charId, color) {
   const c = parseCol(color);
   const cDark = c.clone().multiplyScalar(0.5);
   const cBright = c.clone().lerp(new T.Color(0xffffff), 0.35);
-  const wheelMat = new T.MeshStandardMaterial({ color: 0x111111, roughness: 0.8 });
-  const hubMat = new T.MeshStandardMaterial({ color: 0x444444, metalness: 0.7, roughness: 0.3 });
-  const headlightMat = new T.MeshStandardMaterial({ color: 0xfff5b0, emissive: 0xfff5b0, emissiveIntensity: 1.0 });
-  const taillightMat = new T.MeshStandardMaterial({ color: 0xff2828, emissive: 0xff2828, emissiveIntensity: 0.6 });
-  const glassMat = new T.MeshStandardMaterial({ color: 0x88ccff, emissive: 0x88ccff, emissiveIntensity: 0.15, transparent: true, opacity: 0.45, metalness: 0.9, roughness: 0.1 });
-  const cockpitMat = new T.MeshStandardMaterial({ color: 0x1a1d28, roughness: 0.3, metalness: 0.6 });
+  const wheelMat = new T.MeshStandardMaterial({ color: 0x0a0a0a, roughness: 0.92, metalness: 0.05 });
+  const hubMat = new T.MeshStandardMaterial({ color: 0x666666, metalness: 0.85, roughness: 0.15 });
+  const headlightMat = new T.MeshStandardMaterial({ color: 0xfff8d0, emissive: 0xfff5b0, emissiveIntensity: 1.4 });
+  const taillightMat = new T.MeshStandardMaterial({ color: 0xff2020, emissive: 0xff2828, emissiveIntensity: 0.9 });
+  const glassMat = new T.MeshStandardMaterial({ color: 0x88ccff, emissive: 0x88ccff, emissiveIntensity: 0.2, transparent: true, opacity: 0.5, metalness: 0.95, roughness: 0.05 });
+  const cockpitMat = new T.MeshStandardMaterial({ color: 0x12151e, roughness: 0.25, metalness: 0.7 });
 
   function addWheels(positions) {
     group._wheels = [];
-    const geo = new T.CylinderGeometry(3.5, 3.5, 4, 8);
+    const tireGeo = new T.TorusGeometry(3.2, 1.6, 10, 16);
+    const cylGeo = new T.CylinderGeometry(2.8, 2.8, 3.8, 14);
+    const hubGeo = new T.CylinderGeometry(1.8, 1.8, 4.0, 8);
+    const rimGeo = new T.TorusGeometry(2.2, 0.3, 6, 12);
+    const rimMat = new T.MeshStandardMaterial({ color: 0x888888, metalness: 0.9, roughness: 0.1 });
     positions.forEach(([wx, wy, wz]) => {
-      const wheel = new T.Mesh(geo, wheelMat);
-      wheel.position.set(wx, wy, wz);
-      wheel.rotation.z = Math.PI / 2;
-      group.add(wheel);
-      const hub = new T.Mesh(new T.CylinderGeometry(1.5, 1.5, 4.2, 6), hubMat);
-      hub.position.set(wx, wy, wz);
+      const wheelGroup = new T.Group();
+      wheelGroup.position.set(wx, wy, wz);
+      const tire = new T.Mesh(tireGeo, wheelMat);
+      tire.rotation.x = Math.PI / 2;
+      wheelGroup.add(tire);
+      const inner = new T.Mesh(cylGeo, wheelMat);
+      inner.rotation.z = Math.PI / 2;
+      wheelGroup.add(inner);
+      const hub = new T.Mesh(hubGeo, hubMat);
       hub.rotation.z = Math.PI / 2;
-      group.add(hub);
-      group._wheels.push(wheel);
+      wheelGroup.add(hub);
+      const rim = new T.Mesh(rimGeo, rimMat);
+      rim.rotation.x = Math.PI / 2;
+      wheelGroup.add(rim);
+      wheelGroup.castShadow = true;
+      group.add(wheelGroup);
+      group._wheels.push(wheelGroup);
     });
   }
 
   if (charId === "anton") {
-    // Anton: sleek low-slung speed machine, narrow and long
-    const bodyMat = new T.MeshStandardMaterial({ color: c, roughness: 0.3, metalness: 0.6 });
-    group.add(new T.Mesh(new T.BoxGeometry(16, 6, 34), bodyMat)).position.y = 5;
-    // Tapered nose
-    const noseMat = new T.MeshStandardMaterial({ color: cBright, roughness: 0.25, metalness: 0.65 });
+    const bodyMat = new T.MeshStandardMaterial({ color: c, roughness: 0.18, metalness: 0.75 });
+    const body = new T.Mesh(new T.BoxGeometry(16, 6, 34, 2, 1, 2), bodyMat);
+    body.position.y = 5; body.castShadow = true; body.receiveShadow = true;
+    group.add(body);
+    const noseMat = new T.MeshStandardMaterial({ color: cBright, roughness: 0.15, metalness: 0.8 });
     const nose = new T.Mesh(new T.BoxGeometry(12, 4, 10), noseMat);
-    nose.position.set(0, 5, 18);
+    nose.position.set(0, 5, 18); nose.castShadow = true;
     group.add(nose);
-    // Low cockpit
+    const sideSkirtMat = new T.MeshStandardMaterial({ color: cDark, roughness: 0.3, metalness: 0.6 });
+    for (let s of [-1, 1]) {
+      const skirt = new T.Mesh(new T.BoxGeometry(1.5, 3, 30), sideSkirtMat);
+      skirt.position.set(s * 8.5, 3, 0);
+      group.add(skirt);
+    }
     group.add(new T.Mesh(new T.BoxGeometry(10, 4, 8), cockpitMat)).position.set(0, 9, -2);
-    // Helmet
-    group.add(new T.Mesh(new T.SphereGeometry(3, 8, 6), new T.MeshStandardMaterial({ color: c, emissive: c, emissiveIntensity: 0.4 }))).position.set(0, 12, -2);
-    // Windshield
+    const helmetMat = new T.MeshStandardMaterial({ color: c, emissive: c, emissiveIntensity: 0.4, metalness: 0.5, roughness: 0.2 });
+    group.add(new T.Mesh(new T.SphereGeometry(3, 12, 8), helmetMat)).position.set(0, 12, -2);
+    const visorMat = new T.MeshStandardMaterial({ color: 0x222244, emissive: 0x3344ff, emissiveIntensity: 0.3, metalness: 0.9, roughness: 0.05 });
+    const visor = new T.Mesh(new T.SphereGeometry(2.8, 10, 6, 0, Math.PI * 2, 0, Math.PI / 2.5), visorMat);
+    visor.position.set(0, 12.5, -1); visor.rotation.x = -0.6;
+    group.add(visor);
     const ws = new T.Mesh(new T.BoxGeometry(9, 3, 1.5), glassMat);
     ws.position.set(0, 10, 4); ws.rotation.x = -0.3;
     group.add(ws);
-    // Antenna
-    group.add(new T.Mesh(new T.CylinderGeometry(0.3, 0.3, 14, 4), new T.MeshStandardMaterial({ color: 0xaaaaaa }))).position.set(0, 16, -10);
-    group.add(new T.Mesh(new T.SphereGeometry(1.5, 6, 4), new T.MeshStandardMaterial({ color: c, emissive: c, emissiveIntensity: 1.0 }))).position.set(0, 23, -10);
-    // Speed stripes
+    group.add(new T.Mesh(new T.CylinderGeometry(0.3, 0.3, 14, 6), new T.MeshStandardMaterial({ color: 0xcccccc, metalness: 0.8 }))).position.set(0, 16, -10);
+    group.add(new T.Mesh(new T.SphereGeometry(1.5, 8, 6), new T.MeshStandardMaterial({ color: c, emissive: c, emissiveIntensity: 1.2 }))).position.set(0, 23, -10);
     for (let s of [-1, 1]) {
-      group.add(new T.Mesh(new T.BoxGeometry(1, 1, 30), new T.MeshStandardMaterial({ color: cBright, emissive: c, emissiveIntensity: 0.4 }))).position.set(s * 5, 8.5, 0);
+      group.add(new T.Mesh(new T.BoxGeometry(1, 0.8, 30), new T.MeshStandardMaterial({ color: cBright, emissive: c, emissiveIntensity: 0.6 }))).position.set(s * 5, 8.5, 0);
     }
-    // Rear wing (low, wide)
-    group.add(new T.Mesh(new T.BoxGeometry(20, 1.5, 3), new T.MeshStandardMaterial({ color: cDark }))).position.set(0, 10, -16);
+    const wingMat = new T.MeshStandardMaterial({ color: cDark, roughness: 0.3, metalness: 0.6 });
+    group.add(new T.Mesh(new T.BoxGeometry(20, 1.5, 3), wingMat)).position.set(0, 10, -16);
+    for (let s of [-1, 1]) {
+      group.add(new T.Mesh(new T.BoxGeometry(1.2, 4, 1.2), wingMat)).position.set(s * 7, 8, -16);
+    }
     addWheels([[-7, 2.5, 12], [7, 2.5, 12], [-7, 2.5, -12], [7, 2.5, -12]]);
-    [[-5, 5, 18], [5, 5, 18]].forEach(p => group.add(new T.Mesh(new T.BoxGeometry(2.5, 2.5, 2), headlightMat)).position.set(...p));
-    [[-5, 5, -17], [5, 5, -17]].forEach(p => group.add(new T.Mesh(new T.BoxGeometry(2.5, 1.5, 1.5), taillightMat)).position.set(...p));
+    [[-5, 5, 18], [5, 5, 18]].forEach(p => group.add(new T.Mesh(new T.SphereGeometry(1.5, 8, 6), headlightMat)).position.set(...p));
+    [[-5, 5, -17], [5, 5, -17]].forEach(p => group.add(new T.Mesh(new T.SphereGeometry(1.2, 8, 6), taillightMat)).position.set(...p));
 
   } else if (charId === "artur") {
-    // Artur: hot rod muscle car, high rear, flame-painted look
-    const bodyMat = new T.MeshStandardMaterial({ color: c, roughness: 0.35, metalness: 0.55 });
-    group.add(new T.Mesh(new T.BoxGeometry(22, 8, 30), bodyMat)).position.y = 6;
-    // Raised rear engine block
-    const engineMat = new T.MeshStandardMaterial({ color: cDark, roughness: 0.5, metalness: 0.7 });
+    const bodyMat = new T.MeshStandardMaterial({ color: c, roughness: 0.22, metalness: 0.7 });
+    const body = new T.Mesh(new T.BoxGeometry(22, 8, 30, 2, 1, 2), bodyMat);
+    body.position.y = 6; body.castShadow = true; body.receiveShadow = true;
+    group.add(body);
+    const engineMat = new T.MeshStandardMaterial({ color: cDark, roughness: 0.4, metalness: 0.75 });
     group.add(new T.Mesh(new T.BoxGeometry(18, 6, 8), engineMat)).position.set(0, 12, -10);
-    // Air intake scoops on hood
     for (let s of [-1, 1]) {
       group.add(new T.Mesh(new T.BoxGeometry(4, 4, 6), engineMat)).position.set(s * 5, 11, 4);
     }
-    // Cockpit
     group.add(new T.Mesh(new T.BoxGeometry(14, 5, 10), cockpitMat)).position.set(0, 11, 0);
-    group.add(new T.Mesh(new T.SphereGeometry(3.5, 8, 6), new T.MeshStandardMaterial({ color: c, emissive: c, emissiveIntensity: 0.3 }))).position.set(0, 14.5, -1);
-    // Windshield
+    const helmetMat = new T.MeshStandardMaterial({ color: c, emissive: c, emissiveIntensity: 0.3, metalness: 0.5, roughness: 0.2 });
+    group.add(new T.Mesh(new T.SphereGeometry(3.5, 12, 8), helmetMat)).position.set(0, 14.5, -1);
+    const visorMat = new T.MeshStandardMaterial({ color: 0x332200, emissive: 0xff6600, emissiveIntensity: 0.2, metalness: 0.9, roughness: 0.05 });
+    const visor = new T.Mesh(new T.SphereGeometry(3.3, 10, 6, 0, Math.PI * 2, 0, Math.PI / 2.5), visorMat);
+    visor.position.set(0, 15, 0); visor.rotation.x = -0.6;
+    group.add(visor);
     const ws = new T.Mesh(new T.BoxGeometry(13, 4, 1.5), glassMat);
     ws.position.set(0, 13, 6); ws.rotation.x = -0.35;
     group.add(ws);
-    // Flame decals (emissive orange triangles on sides)
-    const flameMat = new T.MeshStandardMaterial({ color: 0xff6600, emissive: 0xff8a3b, emissiveIntensity: 0.6, transparent: true, opacity: 0.7, side: T.DoubleSide });
+    const flameMat = new T.MeshStandardMaterial({ color: 0xff6600, emissive: 0xff8a3b, emissiveIntensity: 0.8, transparent: true, opacity: 0.75, side: T.DoubleSide });
     for (let s of [-1, 1]) {
       const flameGeo = new T.BufferGeometry();
       flameGeo.setAttribute("position", new T.Float32BufferAttribute([
         -8, 0, 0, 8, 0, -3, 0, 0, 3,
+        -6, 0, -1, 10, 0, -4, 2, 0, 4,
       ], 3));
       flameGeo.computeVertexNormals();
       const flame = new T.Mesh(flameGeo, flameMat);
@@ -10853,125 +10975,149 @@ function buildKartModel3D(charId, color) {
       flame.rotation.y = s * Math.PI / 2;
       group.add(flame);
     }
-    // Big rear spoiler
-    group.add(new T.Mesh(new T.BoxGeometry(24, 2, 3), new T.MeshStandardMaterial({ color: cDark }))).position.set(0, 16, -14);
-    const spoilerLegs = new T.MeshStandardMaterial({ color: cDark });
+    const spoilerMat = new T.MeshStandardMaterial({ color: cDark, roughness: 0.3, metalness: 0.6 });
+    group.add(new T.Mesh(new T.BoxGeometry(24, 2, 3), spoilerMat)).position.set(0, 16, -14);
     for (let s of [-1, 1]) {
-      group.add(new T.Mesh(new T.BoxGeometry(2, 6, 2), spoilerLegs)).position.set(s * 9, 13, -14);
+      group.add(new T.Mesh(new T.BoxGeometry(2, 6, 2), spoilerMat)).position.set(s * 9, 13, -14);
     }
-    // Dual exhaust pipes
-    const pipeMat = new T.MeshStandardMaterial({ color: 0x555555, metalness: 0.8, roughness: 0.3 });
+    const pipeMat = new T.MeshStandardMaterial({ color: 0x555555, metalness: 0.85, roughness: 0.2 });
+    const pipeGlowMat = new T.MeshStandardMaterial({ color: 0xff4400, emissive: 0xff4400, emissiveIntensity: 0.5, transparent: true, opacity: 0.6 });
     for (let s of [-1, 1]) {
-      group.add(new T.Mesh(new T.CylinderGeometry(2, 2.5, 6, 8), pipeMat)).position.set(s * 6, 4, -18);
-      group.children[group.children.length - 1].rotation.x = Math.PI / 2;
+      const pipe = new T.Mesh(new T.CylinderGeometry(2, 2.5, 6, 12), pipeMat);
+      pipe.position.set(s * 6, 4, -18); pipe.rotation.x = Math.PI / 2;
+      group.add(pipe);
+      const pipeGlow = new T.Mesh(new T.CylinderGeometry(1.5, 2, 2, 10), pipeGlowMat);
+      pipeGlow.position.set(s * 6, 4, -21); pipeGlow.rotation.x = Math.PI / 2;
+      group.add(pipeGlow);
     }
     addWheels([[-10, 3, 11], [10, 3, 11], [-10, 3, -11], [10, 3, -11]]);
-    [[-8, 6, 16], [8, 6, 16]].forEach(p => group.add(new T.Mesh(new T.BoxGeometry(3, 3, 2), headlightMat)).position.set(...p));
-    [[-7, 6, -15], [7, 6, -15]].forEach(p => group.add(new T.Mesh(new T.BoxGeometry(3, 2, 1.5), taillightMat)).position.set(...p));
+    [[-8, 6, 16], [8, 6, 16]].forEach(p => group.add(new T.Mesh(new T.SphereGeometry(1.8, 8, 6), headlightMat)).position.set(...p));
+    [[-7, 6, -15], [7, 6, -15]].forEach(p => group.add(new T.Mesh(new T.SphereGeometry(1.4, 8, 6), taillightMat)).position.set(...p));
 
   } else if (charId === "rissal") {
-    // Rissal: rounded hatchback, neon underglow, nervous compact car
-    const bodyMat = new T.MeshStandardMaterial({ color: c, roughness: 0.4, metalness: 0.5 });
-    group.add(new T.Mesh(new T.BoxGeometry(20, 8, 26), bodyMat)).position.y = 6;
-    // Rounded roof
-    group.add(new T.Mesh(new T.SphereGeometry(10, 10, 8, 0, Math.PI * 2, 0, Math.PI / 2), bodyMat)).position.set(0, 10, -2);
-    // Cockpit
+    const bodyMat = new T.MeshStandardMaterial({ color: c, roughness: 0.25, metalness: 0.65 });
+    const body = new T.Mesh(new T.BoxGeometry(20, 8, 26, 2, 1, 2), bodyMat);
+    body.position.y = 6; body.castShadow = true; body.receiveShadow = true;
+    group.add(body);
+    group.add(new T.Mesh(new T.SphereGeometry(10, 14, 10, 0, Math.PI * 2, 0, Math.PI / 2), bodyMat)).position.set(0, 10, -2);
     group.add(new T.Mesh(new T.BoxGeometry(14, 4, 10), cockpitMat)).position.set(0, 11, -2);
-    group.add(new T.Mesh(new T.SphereGeometry(3.5, 8, 6), new T.MeshStandardMaterial({ color: c, emissive: c, emissiveIntensity: 0.3 }))).position.set(0, 14, -2);
-    // Windshield
+    const helmetMat = new T.MeshStandardMaterial({ color: c, emissive: c, emissiveIntensity: 0.3, metalness: 0.5, roughness: 0.2 });
+    group.add(new T.Mesh(new T.SphereGeometry(3.5, 12, 8), helmetMat)).position.set(0, 14, -2);
+    const visorMat = new T.MeshStandardMaterial({ color: 0x112222, emissive: c, emissiveIntensity: 0.15, metalness: 0.9, roughness: 0.05 });
+    const visor = new T.Mesh(new T.SphereGeometry(3.3, 10, 6, 0, Math.PI * 2, 0, Math.PI / 2.5), visorMat);
+    visor.position.set(0, 14.5, -1); visor.rotation.x = -0.6;
+    group.add(visor);
     const ws = new T.Mesh(new T.BoxGeometry(12, 4, 1.5), glassMat);
     ws.position.set(0, 12, 4); ws.rotation.x = -0.35;
     group.add(ws);
-    // Neon underglow (bright emissive strips)
-    const glowMat = new T.MeshStandardMaterial({ color: c, emissive: c, emissiveIntensity: 1.2, transparent: true, opacity: 0.6 });
+    const glowMat = new T.MeshStandardMaterial({ color: c, emissive: c, emissiveIntensity: 1.5, transparent: true, opacity: 0.7 });
     for (let s of [-1, 1]) {
-      group.add(new T.Mesh(new T.BoxGeometry(1.5, 1, 28), glowMat)).position.set(s * 10.5, 1.5, 0);
+      group.add(new T.Mesh(new T.BoxGeometry(1.5, 1.2, 28), glowMat)).position.set(s * 10.5, 1.5, 0);
     }
-    group.add(new T.Mesh(new T.BoxGeometry(20, 1, 1.5), glowMat)).position.set(0, 1.5, 13);
-    group.add(new T.Mesh(new T.BoxGeometry(20, 1, 1.5), glowMat)).position.set(0, 1.5, -13);
-    // Small spoiler
-    group.add(new T.Mesh(new T.BoxGeometry(18, 1.5, 2), new T.MeshStandardMaterial({ color: cDark }))).position.set(0, 11, -13);
+    group.add(new T.Mesh(new T.BoxGeometry(20, 1.2, 1.5), glowMat)).position.set(0, 1.5, 13);
+    group.add(new T.Mesh(new T.BoxGeometry(20, 1.2, 1.5), glowMat)).position.set(0, 1.5, -13);
+    const underGlow = new T.PointLight(new T.Color(c), 0.5, 60);
+    underGlow.position.set(0, 1, 0);
+    group.add(underGlow);
+    const spoilerMat = new T.MeshStandardMaterial({ color: cDark, roughness: 0.3, metalness: 0.6 });
+    group.add(new T.Mesh(new T.BoxGeometry(18, 1.5, 2), spoilerMat)).position.set(0, 11, -13);
     addWheels([[-9, 2.5, 10], [9, 2.5, 10], [-9, 2.5, -10], [9, 2.5, -10]]);
-    [[-7, 6, 14], [7, 6, 14]].forEach(p => group.add(new T.Mesh(new T.BoxGeometry(3, 2.5, 2), headlightMat)).position.set(...p));
-    [[-6, 6, -13], [6, 6, -13]].forEach(p => group.add(new T.Mesh(new T.BoxGeometry(3, 2, 1.5), taillightMat)).position.set(...p));
+    [[-7, 6, 14], [7, 6, 14]].forEach(p => group.add(new T.Mesh(new T.SphereGeometry(1.5, 8, 6), headlightMat)).position.set(...p));
+    [[-6, 6, -13], [6, 6, -13]].forEach(p => group.add(new T.Mesh(new T.SphereGeometry(1.2, 8, 6), taillightMat)).position.set(...p));
 
   } else if (charId === "pia") {
-    // Pia: wide tank/SUV, reinforced bumpers, boxy and heavy
-    const bodyMat = new T.MeshStandardMaterial({ color: c, roughness: 0.5, metalness: 0.45 });
-    group.add(new T.Mesh(new T.BoxGeometry(26, 10, 30), bodyMat)).position.y = 7;
-    // Raised roof rack
-    const rackMat = new T.MeshStandardMaterial({ color: 0x333344, metalness: 0.6, roughness: 0.4 });
+    const bodyMat = new T.MeshStandardMaterial({ color: c, roughness: 0.35, metalness: 0.55 });
+    const body = new T.Mesh(new T.BoxGeometry(26, 10, 30, 2, 1, 2), bodyMat);
+    body.position.y = 7; body.castShadow = true; body.receiveShadow = true;
+    group.add(body);
+    const rackMat = new T.MeshStandardMaterial({ color: 0x333344, metalness: 0.7, roughness: 0.3 });
     group.add(new T.Mesh(new T.BoxGeometry(22, 1.5, 18), rackMat)).position.set(0, 13.5, -2);
     for (let s of [-1, 1]) {
       group.add(new T.Mesh(new T.BoxGeometry(1.5, 3, 1.5), rackMat)).position.set(s * 10, 12.5, 6);
       group.add(new T.Mesh(new T.BoxGeometry(1.5, 3, 1.5), rackMat)).position.set(s * 10, 12.5, -8);
     }
-    // Cockpit
+    const spotlightBar = new T.MeshStandardMaterial({ color: 0xffdd44, emissive: 0xffdd44, emissiveIntensity: 0.6 });
+    for (let i = -1; i <= 1; i++) {
+      group.add(new T.Mesh(new T.SphereGeometry(1.2, 8, 6), spotlightBar)).position.set(i * 6, 15.5, -2);
+    }
     group.add(new T.Mesh(new T.BoxGeometry(18, 6, 14), cockpitMat)).position.set(0, 13, -1);
-    group.add(new T.Mesh(new T.SphereGeometry(3.5, 8, 6), new T.MeshStandardMaterial({ color: c, emissive: c, emissiveIntensity: 0.3 }))).position.set(0, 17, -1);
-    // Windshield
+    const helmetMat = new T.MeshStandardMaterial({ color: c, emissive: c, emissiveIntensity: 0.3, metalness: 0.5, roughness: 0.2 });
+    group.add(new T.Mesh(new T.SphereGeometry(3.5, 12, 8), helmetMat)).position.set(0, 17, -1);
     const ws = new T.Mesh(new T.BoxGeometry(16, 5, 1.5), glassMat);
     ws.position.set(0, 14.5, 8); ws.rotation.x = -0.3;
     group.add(ws);
-    // Heavy front bumper
-    const bumperMat = new T.MeshStandardMaterial({ color: cDark, roughness: 0.6, metalness: 0.5 });
+    const bumperMat = new T.MeshStandardMaterial({ color: cDark, roughness: 0.5, metalness: 0.55 });
     group.add(new T.Mesh(new T.BoxGeometry(28, 4, 4), bumperMat)).position.set(0, 4, 17);
     group.add(new T.Mesh(new T.BoxGeometry(28, 4, 4), bumperMat)).position.set(0, 4, -17);
-    // Bull bar
-    group.add(new T.Mesh(new T.CylinderGeometry(1, 1, 20, 6), new T.MeshStandardMaterial({ color: 0x666666, metalness: 0.8 }))).position.set(0, 8, 18);
-    group.children[group.children.length - 1].rotation.z = Math.PI / 2;
-    // Side armor plates
+    const bullBarMat = new T.MeshStandardMaterial({ color: 0x777777, metalness: 0.85, roughness: 0.15 });
+    const bullBar = new T.Mesh(new T.CylinderGeometry(1.2, 1.2, 22, 10), bullBarMat);
+    bullBar.position.set(0, 8, 18); bullBar.rotation.z = Math.PI / 2;
+    group.add(bullBar);
+    const bullBarV = new T.Mesh(new T.CylinderGeometry(0.8, 0.8, 6, 8), bullBarMat);
+    bullBarV.position.set(0, 5, 18);
+    group.add(bullBarV);
     for (let s of [-1, 1]) {
-      group.add(new T.Mesh(new T.BoxGeometry(2, 6, 26), bumperMat)).position.set(s * 14, 5, 0);
+      const armor = new T.Mesh(new T.BoxGeometry(2, 6, 26), bumperMat);
+      armor.position.set(s * 14, 5, 0); armor.castShadow = true;
+      group.add(armor);
     }
     addWheels([[-12, 3.5, 12], [12, 3.5, 12], [-12, 3.5, -12], [12, 3.5, -12]]);
-    [[-9, 7, 16], [9, 7, 16]].forEach(p => group.add(new T.Mesh(new T.BoxGeometry(4, 3, 2), headlightMat)).position.set(...p));
-    [[-9, 7, -15], [9, 7, -15]].forEach(p => group.add(new T.Mesh(new T.BoxGeometry(4, 2, 1.5), taillightMat)).position.set(...p));
+    [[-9, 7, 16], [9, 7, 16]].forEach(p => group.add(new T.Mesh(new T.SphereGeometry(2, 8, 6), headlightMat)).position.set(...p));
+    [[-9, 7, -15], [9, 7, -15]].forEach(p => group.add(new T.Mesh(new T.SphereGeometry(1.5, 8, 6), taillightMat)).position.set(...p));
 
   } else if (charId === "florian") {
-    // Florian: executive sedan, clean lines, chrome trim, regulatory badge
-    const bodyMat = new T.MeshStandardMaterial({ color: c, roughness: 0.25, metalness: 0.7 });
-    group.add(new T.Mesh(new T.BoxGeometry(22, 8, 32), bodyMat)).position.y = 6;
-    // Sloped hood
-    const hoodMat = new T.MeshStandardMaterial({ color: cBright, roughness: 0.2, metalness: 0.75 });
+    const bodyMat = new T.MeshStandardMaterial({ color: c, roughness: 0.15, metalness: 0.8 });
+    const body = new T.Mesh(new T.BoxGeometry(22, 8, 32, 2, 1, 2), bodyMat);
+    body.position.y = 6; body.castShadow = true; body.receiveShadow = true;
+    group.add(body);
+    const hoodMat = new T.MeshStandardMaterial({ color: cBright, roughness: 0.12, metalness: 0.85 });
     const hood = new T.Mesh(new T.BoxGeometry(20, 3, 10), hoodMat);
-    hood.position.set(0, 9, 10); hood.rotation.x = -0.12;
+    hood.position.set(0, 9, 10); hood.rotation.x = -0.12; hood.castShadow = true;
     group.add(hood);
-    // Cockpit (taller, executive style)
     group.add(new T.Mesh(new T.BoxGeometry(16, 6, 12), cockpitMat)).position.set(0, 12, -2);
-    group.add(new T.Mesh(new T.SphereGeometry(3.5, 8, 6), new T.MeshStandardMaterial({ color: c, emissive: c, emissiveIntensity: 0.3 }))).position.set(0, 16, -2);
-    // Large windshield
+    const helmetMat = new T.MeshStandardMaterial({ color: c, emissive: c, emissiveIntensity: 0.3, metalness: 0.5, roughness: 0.2 });
+    group.add(new T.Mesh(new T.SphereGeometry(3.5, 12, 8), helmetMat)).position.set(0, 16, -2);
+    const visorMat = new T.MeshStandardMaterial({ color: 0x112233, emissive: 0x57f2ff, emissiveIntensity: 0.15, metalness: 0.9, roughness: 0.05 });
+    const visor = new T.Mesh(new T.SphereGeometry(3.3, 10, 6, 0, Math.PI * 2, 0, Math.PI / 2.5), visorMat);
+    visor.position.set(0, 16.5, -1); visor.rotation.x = -0.6;
+    group.add(visor);
     const ws = new T.Mesh(new T.BoxGeometry(14, 5, 1.5), glassMat);
     ws.position.set(0, 14, 5); ws.rotation.x = -0.3;
     group.add(ws);
-    // Chrome racing stripe (center)
-    const chromeMat = new T.MeshStandardMaterial({ color: 0xa4ff80, emissive: 0xa4ff80, emissiveIntensity: 0.4, metalness: 0.9, roughness: 0.1 });
-    group.add(new T.Mesh(new T.BoxGeometry(2, 1, 34), chromeMat)).position.set(0, 10.5, 0);
-    // Regulatory diamond badge on hood
-    const badgeMat = new T.MeshStandardMaterial({ color: 0x57f2ff, emissive: 0x57f2ff, emissiveIntensity: 0.8 });
-    const badge = new T.Mesh(new T.OctahedronGeometry(3), badgeMat);
+    const chromeMat = new T.MeshStandardMaterial({ color: 0xa4ff80, emissive: 0xa4ff80, emissiveIntensity: 0.5, metalness: 0.95, roughness: 0.05 });
+    group.add(new T.Mesh(new T.BoxGeometry(2, 0.8, 34), chromeMat)).position.set(0, 10.5, 0);
+    for (let s of [-1, 1]) {
+      group.add(new T.Mesh(new T.BoxGeometry(0.8, 0.6, 28), chromeMat)).position.set(s * 8, 10.3, 0);
+    }
+    const badgeMat = new T.MeshStandardMaterial({ color: 0x57f2ff, emissive: 0x57f2ff, emissiveIntensity: 1.0, metalness: 0.8 });
+    const badge = new T.Mesh(new T.OctahedronGeometry(3, 1), badgeMat);
     badge.position.set(0, 11, 12);
     badge.scale.set(1, 0.4, 1);
     group.add(badge);
-    // Subtle spoiler
-    group.add(new T.Mesh(new T.BoxGeometry(20, 1.5, 3), new T.MeshStandardMaterial({ color: cDark }))).position.set(0, 11, -16);
-    // Chrome trim along bottom
-    const trimMat = new T.MeshStandardMaterial({ color: 0xcccccc, metalness: 0.9, roughness: 0.1 });
-    group.add(new T.Mesh(new T.BoxGeometry(22, 1, 32), trimMat)).position.set(0, 2, 0);
+    const spoilerMat = new T.MeshStandardMaterial({ color: cDark, roughness: 0.25, metalness: 0.65 });
+    group.add(new T.Mesh(new T.BoxGeometry(20, 1.5, 3), spoilerMat)).position.set(0, 11, -16);
+    const trimMat = new T.MeshStandardMaterial({ color: 0xdddddd, metalness: 0.95, roughness: 0.05 });
+    group.add(new T.Mesh(new T.BoxGeometry(22, 0.8, 32), trimMat)).position.set(0, 2, 0);
+    for (let s of [-1, 1]) {
+      group.add(new T.Mesh(new T.BoxGeometry(0.6, 7, 30), trimMat)).position.set(s * 11.2, 6, 0);
+    }
     addWheels([[-10, 3, 12], [10, 3, 12], [-10, 3, -12], [10, 3, -12]]);
-    [[-8, 6, 17], [8, 6, 17]].forEach(p => group.add(new T.Mesh(new T.BoxGeometry(3, 2.5, 2), headlightMat)).position.set(...p));
-    [[-7, 6, -16], [7, 6, -16]].forEach(p => group.add(new T.Mesh(new T.BoxGeometry(3, 2, 1.5), taillightMat)).position.set(...p));
+    [[-8, 6, 17], [8, 6, 17]].forEach(p => group.add(new T.Mesh(new T.SphereGeometry(1.6, 10, 8), headlightMat)).position.set(...p));
+    [[-7, 6, -16], [7, 6, -16]].forEach(p => group.add(new T.Mesh(new T.SphereGeometry(1.3, 8, 6), taillightMat)).position.set(...p));
 
   } else {
-    // Fallback generic kart
-    const bodyMat = new T.MeshStandardMaterial({ color: c, roughness: 0.4, metalness: 0.5 });
-    group.add(new T.Mesh(new T.BoxGeometry(20, 8, 28), bodyMat)).position.y = 6;
+    const bodyMat = new T.MeshStandardMaterial({ color: c, roughness: 0.25, metalness: 0.65 });
+    const body = new T.Mesh(new T.BoxGeometry(20, 8, 28, 2, 1, 2), bodyMat);
+    body.position.y = 6; body.castShadow = true; body.receiveShadow = true;
+    group.add(body);
     group.add(new T.Mesh(new T.BoxGeometry(12, 5, 10), cockpitMat)).position.set(0, 11, -2);
-    group.add(new T.Mesh(new T.SphereGeometry(3.5, 8, 6), new T.MeshStandardMaterial({ color: c, emissive: c, emissiveIntensity: 0.3 }))).position.set(0, 14, -2);
+    const helmetMat = new T.MeshStandardMaterial({ color: c, emissive: c, emissiveIntensity: 0.3, metalness: 0.5, roughness: 0.2 });
+    group.add(new T.Mesh(new T.SphereGeometry(3.5, 12, 8), helmetMat)).position.set(0, 14, -2);
     addWheels([[-8, 3, 10], [8, 3, 10], [-8, 3, -10], [8, 3, -10]]);
-    [[-6, 6, 15], [6, 6, 15]].forEach(p => group.add(new T.Mesh(new T.BoxGeometry(3, 3, 2), headlightMat)).position.set(...p));
-    [[-6, 6, -14], [6, 6, -14]].forEach(p => group.add(new T.Mesh(new T.BoxGeometry(3, 2, 1.5), taillightMat)).position.set(...p));
-    group.add(new T.Mesh(new T.BoxGeometry(22, 2, 3), new T.MeshStandardMaterial({ color: cDark }))).position.set(0, 12, -14);
+    [[-6, 6, 15], [6, 6, 15]].forEach(p => group.add(new T.Mesh(new T.SphereGeometry(1.5, 8, 6), headlightMat)).position.set(...p));
+    [[-6, 6, -14], [6, 6, -14]].forEach(p => group.add(new T.Mesh(new T.SphereGeometry(1.2, 8, 6), taillightMat)).position.set(...p));
+    const spoilerMat = new T.MeshStandardMaterial({ color: cDark, roughness: 0.3, metalness: 0.6 });
+    group.add(new T.Mesh(new T.BoxGeometry(22, 2, 3), spoilerMat)).position.set(0, 12, -14);
   }
 
   // Shield (wireframe icosahedron for hex-grid look + solid inner glow)
@@ -10990,20 +11136,31 @@ function buildKartModel3D(charId, color) {
   group._shieldMat = shieldMat;
   group._shieldInner = shieldInner;
 
-  // Boost flame (hidden by default)
-  const flameGeo = new T.ConeGeometry(7, 28, 10);
+  const flameGroup = new T.Group();
+  flameGroup.rotation.x = -Math.PI / 2;
+  flameGroup.position.set(0, 5, -28);
+  const flameGeo = new T.ConeGeometry(7, 28, 12);
   const flameMat = new T.MeshStandardMaterial({
     color: 0xff8a3b,
     emissive: 0xff4d00,
-    emissiveIntensity: 1.2,
+    emissiveIntensity: 1.5,
     transparent: true,
     opacity: 0,
   });
-  const flame = new T.Mesh(flameGeo, flameMat);
-  flame.rotation.x = -Math.PI / 2;
-  flame.position.set(0, 5, -28);
-  group.add(flame);
-  group._flame = flame;
+  flameGroup.add(new T.Mesh(flameGeo, flameMat));
+  const flameCore = new T.Mesh(
+    new T.ConeGeometry(3.5, 22, 8),
+    new T.MeshStandardMaterial({ color: 0xffdd66, emissive: 0xffaa00, emissiveIntensity: 2.0, transparent: true, opacity: 0 })
+  );
+  flameCore.position.y = 3;
+  flameGroup.add(flameCore);
+  flameGroup._coreMat = flameCore.material;
+  const flameLight = new T.PointLight(0xff6600, 0, 80);
+  flameLight.position.y = -5;
+  flameGroup.add(flameLight);
+  flameGroup._flameLight = flameLight;
+  group.add(flameGroup);
+  group._flame = flameGroup;
   group._flameMat = flameMat;
 
   return group;
@@ -11016,24 +11173,38 @@ function buildDragonModel3D(isEscapeDragon = false) {
   const s = isEscapeDragon ? 1.6 : 1.15;
   const baseColor = isEscapeDragon ? 0x2a1010 : 0x3a0d20;
   const glowColor = isEscapeDragon ? 0xff3300 : 0xff3366;
-  const bodyMat = new T.MeshStandardMaterial({ color: baseColor, emissive: glowColor, emissiveIntensity: 0.22, roughness: 0.45 });
-  const boneMat = new T.MeshStandardMaterial({ color: 0x4a2818, emissive: glowColor, emissiveIntensity: 0.08, roughness: 0.6 });
-  const wingMat = new T.MeshStandardMaterial({ color: baseColor, emissive: glowColor, emissiveIntensity: 0.3, transparent: true, opacity: 0.65, side: T.DoubleSide });
+  const bodyMat = new T.MeshStandardMaterial({ color: baseColor, emissive: glowColor, emissiveIntensity: 0.28, roughness: 0.35, metalness: 0.3 });
+  const boneMat = new T.MeshStandardMaterial({ color: 0x4a2818, emissive: glowColor, emissiveIntensity: 0.12, roughness: 0.5, metalness: 0.2 });
+  const wingMat = new T.MeshStandardMaterial({ color: baseColor, emissive: glowColor, emissiveIntensity: 0.4, transparent: true, opacity: 0.7, side: T.DoubleSide });
 
-  // Neck + body chain (5 connected spheres)
   [[-80, 28, 0, 32], [-42, 34, 0, 36], [-4, 38, 0, 38], [30, 42, 0, 32], [58, 48, 0, 26]].forEach(([px, py, pz, r]) => {
-    const seg = new T.Mesh(new T.SphereGeometry(r, 12, 8), bodyMat);
+    const seg = new T.Mesh(new T.SphereGeometry(r, 16, 12), bodyMat);
     seg.position.set(px, py, pz);
     seg.scale.set(1.1, 0.7, 0.75);
+    seg.castShadow = true;
     group.add(seg);
   });
+  const scaleMat = new T.MeshStandardMaterial({ color: baseColor, emissive: glowColor, emissiveIntensity: 0.15, roughness: 0.4, metalness: 0.4 });
+  [[-60, 20, 0], [-20, 24, 0], [15, 28, 0], [45, 34, 0]].forEach(([px, py, pz]) => {
+    const belly = new T.Mesh(new T.SphereGeometry(14, 10, 8), scaleMat);
+    belly.position.set(px, py - 8, pz);
+    belly.scale.set(1.6, 0.4, 0.8);
+    group.add(belly);
+  });
 
-  // Head
-  const head = new T.Mesh(new T.SphereGeometry(24, 14, 10), bodyMat);
+  const head = new T.Mesh(new T.SphereGeometry(24, 18, 14), bodyMat);
   head.scale.set(1.4, 0.85, 0.85);
   head.position.set(80, 52, 0);
+  head.castShadow = true;
   group.add(head);
   group._head = head;
+  const browMat = new T.MeshStandardMaterial({ color: baseColor, emissive: glowColor, emissiveIntensity: 0.1, roughness: 0.5 });
+  [[72, 62, -10], [72, 62, 10]].forEach(pos => {
+    const brow = new T.Mesh(new T.BoxGeometry(12, 3, 8), browMat);
+    brow.position.set(pos[0], pos[1], pos[2]);
+    brow.rotation.z = pos[2] > 0 ? -0.2 : 0.2;
+    group.add(brow);
+  });
 
   // Snout / jaw
   const jaw = new T.Mesh(new T.BoxGeometry(38, 12, 20), bodyMat);
@@ -11047,74 +11218,110 @@ function buildDragonModel3D(isEscapeDragon = false) {
   group.add(lowerJaw);
   group._lowerJaw = lowerJaw;
 
-  // Teeth (upper)
-  const teethMat = new T.MeshStandardMaterial({ color: 0xe8e0d0, emissive: 0xffffff, emissiveIntensity: 0.15 });
-  for (let i = 0; i < 5; i++) {
-    const tooth = new T.Mesh(new T.ConeGeometry(2.5, 10, 4), teethMat);
-    tooth.position.set(92 + i * 7, 42, (i % 2 === 0 ? -7 : 7));
+  const teethMat = new T.MeshStandardMaterial({ color: 0xf0e8d8, emissive: 0xffffff, emissiveIntensity: 0.2, metalness: 0.3, roughness: 0.4 });
+  for (let i = 0; i < 6; i++) {
+    const tooth = new T.Mesh(new T.ConeGeometry(2.5, 10 + (i % 2) * 3, 5), teethMat);
+    tooth.position.set(90 + i * 6, 42, (i % 2 === 0 ? -7 : 7));
     tooth.rotation.z = Math.PI;
     group.add(tooth);
   }
+  for (let i = 0; i < 4; i++) {
+    const lTooth = new T.Mesh(new T.ConeGeometry(2, 7, 4), teethMat);
+    lTooth.position.set(93 + i * 7, 35, (i % 2 === 0 ? -6 : 6));
+    group.add(lTooth);
+  }
 
-  // Eyes
-  const eyeMat = new T.MeshStandardMaterial({ color: 0xffd86b, emissive: 0xffaa00, emissiveIntensity: 1.8 });
-  const pupilMat = new T.MeshStandardMaterial({ color: 0x110000, emissive: 0xff0000, emissiveIntensity: 0.3 });
+  const eyeMat = new T.MeshStandardMaterial({ color: 0xffd86b, emissive: 0xffaa00, emissiveIntensity: 2.2 });
+  const pupilMat = new T.MeshStandardMaterial({ color: 0x110000, emissive: 0xff0000, emissiveIntensity: 0.5 });
   [[76, 60, -12], [76, 60, 12]].forEach(pos => {
-    const eye = new T.Mesh(new T.SphereGeometry(5, 8, 6), eyeMat);
+    const eye = new T.Mesh(new T.SphereGeometry(5.5, 12, 8), eyeMat);
     eye.position.set(pos[0], pos[1], pos[2]);
     group.add(eye);
-    const pupil = new T.Mesh(new T.SphereGeometry(2.5, 6, 4), pupilMat);
+    const pupil = new T.Mesh(new T.SphereGeometry(2.5, 8, 6), pupilMat);
     pupil.position.set(pos[0] + 3, pos[1], pos[2]);
     group.add(pupil);
+    const eyeGlow = new T.PointLight(0xffaa00, 0.4, 40);
+    eyeGlow.position.set(pos[0] + 5, pos[1], pos[2]);
+    group.add(eyeGlow);
   });
 
-  // Horns
   [[-1, 1], [1, 1]].forEach(([side, _]) => {
-    const horn = new T.Mesh(new T.ConeGeometry(4, 32, 6), boneMat);
+    const horn = new T.Mesh(new T.ConeGeometry(4, 32, 8), boneMat);
     horn.position.set(68, 68, side * 14);
     horn.rotation.z = -0.4 * side;
     horn.rotation.x = 0.15 * side;
+    horn.castShadow = true;
     group.add(horn);
+    const hornTip = new T.Mesh(new T.ConeGeometry(1.5, 8, 6), new T.MeshStandardMaterial({ color: 0x2a1510, emissive: glowColor, emissiveIntensity: 0.3 }));
+    hornTip.position.set(68, 85, side * 14);
+    hornTip.rotation.z = -0.4 * side;
+    group.add(hornTip);
   });
 
-  // Dorsal spikes along back
-  for (let i = 0; i < 8; i++) {
-    const spike = new T.Mesh(new T.ConeGeometry(3, 18 + i * 1.5, 4), new T.MeshStandardMaterial({ color: 0x8b0000, emissive: glowColor, emissiveIntensity: 0.15 }));
-    spike.position.set(-80 + i * 22, 50 + i * 1.5, 0);
+  const spikeMat = new T.MeshStandardMaterial({ color: 0x8b0000, emissive: glowColor, emissiveIntensity: 0.2, metalness: 0.3 });
+  for (let i = 0; i < 10; i++) {
+    const spikeH = 16 + i * 1.8 + (i > 6 ? -i * 0.5 : 0);
+    const spike = new T.Mesh(new T.ConeGeometry(3, spikeH, 6), spikeMat);
+    spike.position.set(-90 + i * 19, 50 + i * 1.2, 0);
+    spike.castShadow = true;
     group.add(spike);
   }
 
-  // Tail
-  for (let i = 0; i < 6; i++) {
-    const tailSeg = new T.Mesh(new T.SphereGeometry(18 - i * 2.5, 8, 6), bodyMat);
-    tailSeg.position.set(-100 - i * 26, 24 - i * 2, Math.sin(i * 0.8) * 14);
+  for (let i = 0; i < 7; i++) {
+    const tailR = 18 - i * 2.2;
+    const tailSeg = new T.Mesh(new T.SphereGeometry(tailR, 12, 8), bodyMat);
+    tailSeg.position.set(-100 - i * 24, 24 - i * 1.8, Math.sin(i * 0.8) * 14);
+    tailSeg.castShadow = true;
     group.add(tailSeg);
   }
-  const tailTip = new T.Mesh(new T.ConeGeometry(4, 16, 4), new T.MeshStandardMaterial({ color: 0x8b0000, emissive: glowColor, emissiveIntensity: 0.4 }));
-  tailTip.position.set(-256, 12, Math.sin(4.8) * 14);
+  const tailTipMat = new T.MeshStandardMaterial({ color: 0x8b0000, emissive: glowColor, emissiveIntensity: 0.6, metalness: 0.3 });
+  const tailTip = new T.Mesh(new T.ConeGeometry(5, 20, 6), tailTipMat);
+  tailTip.position.set(-270, 12, Math.sin(4.8) * 14);
   tailTip.rotation.z = Math.PI / 2;
   group.add(tailTip);
+  const tailBlade1 = new T.Mesh(new T.ConeGeometry(3, 12, 4), tailTipMat);
+  tailBlade1.position.set(-268, 18, Math.sin(4.8) * 14 + 4);
+  tailBlade1.rotation.z = 0.5;
+  group.add(tailBlade1);
+  const tailBlade2 = new T.Mesh(new T.ConeGeometry(3, 12, 4), tailTipMat);
+  tailBlade2.position.set(-268, 18, Math.sin(4.8) * 14 - 4);
+  tailBlade2.rotation.z = -0.5;
+  group.add(tailBlade2);
 
-  // Wings (large triangular membranes)
   for (const side of [-1, 1]) {
     const wingGeo = new T.BufferGeometry();
     wingGeo.setAttribute("position", new T.Float32BufferAttribute([
       0, 0, 0,  -60, 30, side * 110,  -30, -6, side * 30,
       -60, 30, side * 110,  -100, 18, side * 80,  -30, -6, side * 30,
+      0, 0, 0,  -30, -6, side * 30,  10, -4, side * 50,
+      -60, 30, side * 110,  -40, 35, side * 130,  -100, 18, side * 80,
     ], 3));
     wingGeo.computeVertexNormals();
     const wing = new T.Mesh(wingGeo, wingMat);
     wing.position.set(-20, 48, 0);
+    wing.castShadow = true;
     group.add(wing);
     if (side === 1) group._wingR = wing;
     else group._wingL = wing;
+    const veinMat = new T.MeshStandardMaterial({ color: glowColor, emissive: glowColor, emissiveIntensity: 0.5, transparent: true, opacity: 0.4 });
+    for (let v = 0; v < 3; v++) {
+      const veinGeo = new T.CylinderGeometry(0.5, 0.3, 60 + v * 10, 4);
+      const vein = new T.Mesh(veinGeo, veinMat);
+      const ang = (v - 1) * 0.3;
+      vein.position.set(-20 - 30 - v * 10, 48 + 10 + v * 5, side * (40 + v * 25));
+      vein.rotation.z = ang * side + 0.5;
+      vein.rotation.x = side * 0.3;
+      group.add(vein);
+    }
   }
 
-  // Fire breath glow (always-on point light at mouth)
-  const fireLight = new T.PointLight(isEscapeDragon ? 0xff4400 : 0xff3366, 0.8, 300);
+  const fireLight = new T.PointLight(isEscapeDragon ? 0xff4400 : 0xff3366, 1.2, 400);
   fireLight.position.set(120, 46, 0);
   group.add(fireLight);
   group._fireLight = fireLight;
+  const ambientGlow = new T.PointLight(glowColor, 0.4, 250);
+  ambientGlow.position.set(0, 40, 0);
+  group.add(ambientGlow);
 
   group.scale.setScalar(s);
   return group;
@@ -11127,20 +11334,24 @@ function createHazardMesh3D(hazard) {
   let mesh;
 
   if (ctor === "MergeConflict") {
-    // Git merge conflict: red wireframe cube with ">>>" conflict markers inside
     const g = new T.Group();
     const outer = new T.Mesh(
       new T.BoxGeometry(28, 28, 28),
-      new T.MeshStandardMaterial({ color: 0xff4d6d, emissive: 0xff4d6d, emissiveIntensity: 0.6, wireframe: true })
+      new T.MeshStandardMaterial({ color: 0xff4d6d, emissive: 0xff4d6d, emissiveIntensity: 0.8, wireframe: true })
     );
     g.add(outer);
+    const mid = new T.Mesh(
+      new T.BoxGeometry(22, 22, 22),
+      new T.MeshStandardMaterial({ color: 0xff2244, emissive: 0xff2244, emissiveIntensity: 0.4, wireframe: true, transparent: true, opacity: 0.5 })
+    );
+    mid.rotation.set(Math.PI / 4, Math.PI / 4, 0);
+    g.add(mid);
     const inner = new T.Mesh(
-      new T.OctahedronGeometry(12),
-      new T.MeshStandardMaterial({ color: 0xff4d6d, emissive: 0xff1a40, emissiveIntensity: 0.9, transparent: true, opacity: 0.7 })
+      new T.OctahedronGeometry(10, 1),
+      new T.MeshStandardMaterial({ color: 0xff4d6d, emissive: 0xff1a40, emissiveIntensity: 1.1, transparent: true, opacity: 0.75 })
     );
     g.add(inner);
-    // Conflict arrow markers (two crossing planes)
-    const arrowMat = new T.MeshStandardMaterial({ color: 0xffffff, emissive: 0xff4d6d, emissiveIntensity: 0.5, transparent: true, opacity: 0.65, side: T.DoubleSide });
+    const arrowMat = new T.MeshStandardMaterial({ color: 0xffffff, emissive: 0xff4d6d, emissiveIntensity: 0.7, transparent: true, opacity: 0.7, side: T.DoubleSide });
     const arr1 = new T.Mesh(new T.PlaneGeometry(20, 6), arrowMat);
     arr1.rotation.y = Math.PI / 4;
     arr1.position.y = 2;
@@ -11149,7 +11360,7 @@ function createHazardMesh3D(hazard) {
     arr2.rotation.y = -Math.PI / 4;
     arr2.position.y = -2;
     g.add(arr2);
-    const light = new T.PointLight(0xff4d6d, 0.5, 60);
+    const light = new T.PointLight(0xff4d6d, 0.7, 80);
     g.add(light);
     g.position.y = 16;
     mesh = g;
@@ -11219,59 +11430,61 @@ function createHazardMesh3D(hazard) {
     mesh = g;
 
   } else if (ctor === "RegulatoryProjectile") {
-    // Regulatory audit stamp projectile (spinning paragraph symbol)
     const g = new T.Group();
     const enraged = hazard.enraged;
     const col = enraged ? 0xff7a18 : 0xff3366;
     const diamond = new T.Mesh(
-      new T.OctahedronGeometry(enraged ? 18 : 14),
-      new T.MeshStandardMaterial({ color: col, emissive: col, emissiveIntensity: 0.85, transparent: true, opacity: 0.75 })
+      new T.OctahedronGeometry(enraged ? 18 : 14, 1),
+      new T.MeshStandardMaterial({ color: col, emissive: col, emissiveIntensity: 1.0, transparent: true, opacity: 0.8, metalness: 0.4 })
     );
     g.add(diamond);
     const wireframe = new T.Mesh(
-      new T.OctahedronGeometry(enraged ? 22 : 17),
-      new T.MeshStandardMaterial({ color: col, emissive: col, emissiveIntensity: 0.5, wireframe: true, transparent: true, opacity: 0.4 })
+      new T.IcosahedronGeometry(enraged ? 22 : 17, 1),
+      new T.MeshStandardMaterial({ color: col, emissive: col, emissiveIntensity: 0.6, wireframe: true, transparent: true, opacity: 0.45 })
     );
     g.add(wireframe);
-    const trail = new T.PointLight(col, enraged ? 0.8 : 0.5, enraged ? 100 : 60);
+    const innerGlow = new T.Mesh(
+      new T.SphereGeometry(enraged ? 8 : 6, 10, 8),
+      new T.MeshStandardMaterial({ color: 0xffffff, emissive: col, emissiveIntensity: 1.5, transparent: true, opacity: 0.4 })
+    );
+    g.add(innerGlow);
+    const trail = new T.PointLight(col, enraged ? 1.0 : 0.6, enraged ? 120 : 80);
     g.add(trail);
     g.position.y = 16;
     mesh = g;
 
   } else if (ctor === "DossierProjectile") {
-    // Manila folder with papers sticking out
     const g = new T.Group();
-    const folderMat = new T.MeshStandardMaterial({ color: 0x57f2ff, emissive: 0x57f2ff, emissiveIntensity: 0.45, metalness: 0.2, roughness: 0.5 });
-    // Back panel of folder
+    const folderMat = new T.MeshStandardMaterial({ color: 0x57f2ff, emissive: 0x57f2ff, emissiveIntensity: 0.55, metalness: 0.3, roughness: 0.4 });
     const back = new T.Mesh(new T.BoxGeometry(22, 26, 1.5), folderMat);
     back.position.z = -2;
     g.add(back);
-    // Front panel (slightly shorter, like an open folder)
-    const frontMat = new T.MeshStandardMaterial({ color: 0x3ad0ee, emissive: 0x57f2ff, emissiveIntensity: 0.35, metalness: 0.2, roughness: 0.5 });
+    const frontMat = new T.MeshStandardMaterial({ color: 0x3ad0ee, emissive: 0x57f2ff, emissiveIntensity: 0.4, metalness: 0.3, roughness: 0.4 });
     const front = new T.Mesh(new T.BoxGeometry(22, 20, 1.5), frontMat);
     front.position.set(0, -3, 2);
     g.add(front);
-    // Tab at top
-    const tabMat = new T.MeshStandardMaterial({ color: 0x57f2ff, emissive: 0x57f2ff, emissiveIntensity: 0.8 });
+    const tabMat = new T.MeshStandardMaterial({ color: 0x57f2ff, emissive: 0x57f2ff, emissiveIntensity: 1.0 });
     const tab = new T.Mesh(new T.BoxGeometry(10, 5, 2), tabMat);
     tab.position.set(-4, 15, -2);
     g.add(tab);
-    // Papers sticking out the top (3 pages at slightly different angles)
-    const paperMat = new T.MeshStandardMaterial({ color: 0xeeeeff, emissive: 0xffffff, emissiveIntensity: 0.15, side: T.DoubleSide });
-    for (let p = 0; p < 3; p++) {
+    const paperMat = new T.MeshStandardMaterial({ color: 0xeeeeff, emissive: 0xffffff, emissiveIntensity: 0.2, side: T.DoubleSide });
+    for (let p = 0; p < 4; p++) {
       const page = new T.Mesh(new T.BoxGeometry(18, 24, 0.4), paperMat);
-      page.position.set(rand(-1, 1), 1 + p * 0.5, -0.5 + p * 0.8);
-      page.rotation.z = (p - 1) * 0.04;
+      page.position.set(rand(-1, 1), 1 + p * 0.4, -0.5 + p * 0.7);
+      page.rotation.z = (p - 1.5) * 0.035;
       g.add(page);
     }
-    // Text lines on front page
-    const lineMat = new T.MeshStandardMaterial({ color: 0x57f2ff, emissive: 0x57f2ff, emissiveIntensity: 0.6 });
-    for (let i = 0; i < 5; i++) {
-      const line = new T.Mesh(new T.BoxGeometry(14 - (i % 2) * 4, 0.6, 0.3), lineMat);
-      line.position.set(0, 8 - i * 4, 2.2);
+    const lineMat = new T.MeshStandardMaterial({ color: 0x57f2ff, emissive: 0x57f2ff, emissiveIntensity: 0.8 });
+    for (let i = 0; i < 6; i++) {
+      const line = new T.Mesh(new T.BoxGeometry(14 - (i % 2) * 4, 0.5, 0.3), lineMat);
+      line.position.set(0, 9 - i * 3.5, 2.2);
       g.add(line);
     }
-    const trail = new T.PointLight(0x57f2ff, 0.5, 70);
+    const sealMat = new T.MeshStandardMaterial({ color: 0xff4d6d, emissive: 0xff4d6d, emissiveIntensity: 0.8 });
+    const seal = new T.Mesh(new T.TorusGeometry(3.5, 0.5, 6, 12), sealMat);
+    seal.position.set(6, -5, 2.5);
+    g.add(seal);
+    const trail = new T.PointLight(0x57f2ff, 0.7, 90);
     g.add(trail);
     g.position.y = 14;
     mesh = g;
@@ -11348,21 +11561,29 @@ function sync3DScene(time) {
       }
     }
 
-    // Boost glow
     if (kart.boostTimer > 0) {
       model.children[0].material.emissive = model.children[0].material.color;
       model.children[0].material.emissiveIntensity = 0.4 + 0.3 * Math.sin(time * 0.01);
       if (model._flameMat && model._flame) {
         model._flame.visible = true;
-        model._flameMat.opacity = 0.65 + 0.25 * Math.sin(time * 0.03);
-        const flameScale = 1 + 0.2 * Math.sin(time * 0.05);
-        model._flame.scale.set(flameScale, flameScale, 1 + Math.min(0.8, kart.speed() * 0.08));
+        model._flameMat.opacity = 0.7 + 0.2 * Math.sin(time * 0.03);
+        const flameScale = 1 + 0.25 * Math.sin(time * 0.05);
+        const speedStretch = 1 + Math.min(1.0, kart.speed() * 0.1);
+        model._flame.scale.set(flameScale, speedStretch, flameScale);
+        if (model._flame._coreMat) {
+          model._flame._coreMat.opacity = 0.5 + 0.3 * Math.sin(time * 0.04);
+        }
+        if (model._flame._flameLight) {
+          model._flame._flameLight.intensity = 0.8 + 0.4 * Math.sin(time * 0.06);
+        }
       }
     } else {
       model.children[0].material.emissiveIntensity = 0;
       if (model._flameMat && model._flame) {
         model._flame.visible = false;
         model._flameMat.opacity = 0;
+        if (model._flame._coreMat) model._flame._coreMat.opacity = 0;
+        if (model._flame._flameLight) model._flame._flameLight.intensity = 0;
       }
     }
   }
@@ -11377,12 +11598,18 @@ function sync3DScene(time) {
   const pk = game.player;
   const fx = Math.cos(pk.heading), fy = Math.sin(pk.heading);
 
-  // Move player light
   if (THREE_STATE.playerLight) {
     THREE_STATE.playerLight.position.set(pk.x, 150, pk.y);
   }
+  if (THREE_STATE.dirLight) {
+    THREE_STATE.dirLight.position.set(pk.x + 300, 600, pk.y - 300);
+    THREE_STATE.dirLight.target.position.set(pk.x, 0, pk.y);
+    THREE_STATE.dirLight.target.updateMatrixWorld();
+  }
+  if (THREE_STATE.rimLight) {
+    THREE_STATE.rimLight.position.set(pk.x - 150, 120, pk.y + 150);
+  }
 
-  // Animate item boxes (hypercube spin + inner diamond counter-rotate + pulse glow)
   THREE_STATE.itemMeshes.forEach(m => {
     if (m._itemRef && !m._itemRef.active) { m.visible = false; return; }
     m.visible = true;
@@ -11390,14 +11617,17 @@ function sync3DScene(time) {
     m.rotation.y = spin;
     m.rotation.x = Math.sin(time * 0.004 + m.position.x * 0.01) * 0.3;
     m.position.y = 22 + Math.sin(time * 0.003 + m.position.x * 0.01) * 5;
-    // Inner diamond counter-rotate
     if (m.children && m.children[1]) {
-      m.children[1].rotation.y = -spin * 1.5;
-      m.children[1].rotation.x = spin * 0.8;
+      m.children[1].rotation.y = spin * 0.7;
+      m.children[1].rotation.x = -spin * 0.5;
     }
-    // Pulse glow
-    if (m._innerMat) m._innerMat.emissiveIntensity = 0.7 + 0.4 * Math.sin(time * 0.008 + m.position.x * 0.01);
-    if (m._outerMat) m._outerMat.opacity = 0.25 + 0.15 * Math.sin(time * 0.006 + m.position.x * 0.01);
+    if (m.children && m.children[2]) {
+      m.children[2].rotation.y = -spin * 1.5;
+      m.children[2].rotation.x = spin * 0.8;
+    }
+    if (m._innerMat) m._innerMat.emissiveIntensity = 0.8 + 0.5 * Math.sin(time * 0.008 + m.position.x * 0.01);
+    if (m._outerMat) m._outerMat.opacity = 0.2 + 0.15 * Math.sin(time * 0.006 + m.position.x * 0.01);
+    if (m._midMat) m._midMat.opacity = 0.1 + 0.1 * Math.sin(time * 0.007 + m.position.z * 0.01);
   });
 
   // Animate coins (spinning gold discs with bob)
@@ -12165,6 +12395,17 @@ function drawHUD(time) {
     ctx.font = "bold 11px sans-serif";
     ctx.textAlign = "center"; ctx.textBaseline = "middle";
     ctx.fillText("MUTED", VIEW_W - 42, 141);
+  }
+
+  if (game.p2pMode && game.p2pPing > 0) {
+    const pingY = Sound.muted ? 158 : 130;
+    const pingColor = game.p2pPing < 60 ? "#a4ff80" : game.p2pPing < 120 ? "#ffd86b" : "#ff4d6d";
+    ctx.fillStyle = "rgba(0,0,0,0.45)";
+    ctx.fillRect(VIEW_W - 82, pingY, 68, 20);
+    ctx.fillStyle = pingColor;
+    ctx.font = "bold 10px monospace";
+    ctx.textAlign = "center"; ctx.textBaseline = "middle";
+    ctx.fillText(`${game.p2pPing}ms`, VIEW_W - 48, pingY + 10);
   }
 
   ctx.restore();
@@ -13506,52 +13747,62 @@ function serializeKartState(kart) {
 function applyKartState(kart, p, opts = {}) {
   if (!kart || !p) return;
 
-  const smooth = !!opts.smooth && !p.finished && !p.eliminated;
+  const px = p.x !== undefined ? p.x : p.x;
+  const py = p.y !== undefined ? p.y : p.y;
+  const ph = p.heading !== undefined ? p.heading : p.h;
+  const pvx = p.vx !== undefined ? p.vx : 0;
+  const pvy = p.vy !== undefined ? p.vy : 0;
+  const pFinished = p.finished !== undefined ? p.finished : p.fin;
+  const pElim = p.eliminated !== undefined ? p.eliminated : p.elim;
+
+  const smooth = !!opts.smooth && !pFinished && !pElim;
   if (smooth && Number.isFinite(kart.x) && Number.isFinite(kart.y)) {
-    const targetX = p.x + (p.vx || 0) * TUNING.P2P_REMOTE_VELOCITY_LEAD;
-    const targetY = p.y + (p.vy || 0) * TUNING.P2P_REMOTE_VELOCITY_LEAD;
+    const targetX = px + pvx * TUNING.P2P_REMOTE_VELOCITY_LEAD;
+    const targetY = py + pvy * TUNING.P2P_REMOTE_VELOCITY_LEAD;
     const delta = dist(kart.x, kart.y, targetX, targetY);
     if (delta > TUNING.P2P_REMOTE_SNAP_DIST) {
-      kart.x = p.x;
-      kart.y = p.y;
-      kart.heading = p.heading;
+      kart.x = px;
+      kart.y = py;
+      kart.heading = ph;
     } else {
       kart.x = lerp(kart.x, targetX, TUNING.P2P_REMOTE_INTERP);
       kart.y = lerp(kart.y, targetY, TUNING.P2P_REMOTE_INTERP);
-      kart.heading += angleDiff(kart.heading, p.heading) * TUNING.P2P_REMOTE_INTERP;
+      kart.heading += angleDiff(kart.heading, ph) * TUNING.P2P_REMOTE_INTERP;
     }
   } else {
-    kart.x = p.x;
-    kart.y = p.y;
-    kart.heading = p.heading;
+    kart.x = px;
+    kart.y = py;
+    kart.heading = ph;
   }
 
-  kart.vx = p.vx;
-  kart.vy = p.vy;
-  kart.boostTimer = p.boostTimer;
-  kart.citationBoostTimer = p.citationBoostTimer || 0;
-  kart.shieldTimer = p.shieldTimer;
-  kart.doubleBlindTimer = p.doubleBlindTimer || 0;
-  kart.placeboSlowTimer = p.placeboSlowTimer || 0;
-  kart.itemSlot = p.itemSlot;
-  kart.itemState = p.itemState;
-  kart.finished = p.finished;
-  if (p.eliminated !== undefined) kart.eliminated = !!p.eliminated;
+  kart.vx = pvx;
+  kart.vy = pvy;
+  kart._lastSyncAt = performance.now();
+
+  kart.boostTimer = p.boostTimer ?? p.bt ?? 0;
+  kart.citationBoostTimer = p.citationBoostTimer ?? p.cbt ?? 0;
+  kart.shieldTimer = p.shieldTimer ?? p.st ?? 0;
+  kart.doubleBlindTimer = p.doubleBlindTimer ?? p.dbt ?? 0;
+  kart.placeboSlowTimer = p.placeboSlowTimer ?? p.pst ?? 0;
+  kart.itemSlot = p.itemSlot ?? p.it ?? null;
+  kart.itemState = p.itemState ?? p.is ?? "empty";
+  kart.finished = pFinished || false;
+  if (pElim !== undefined) kart.eliminated = !!pElim;
   kart.lap = p.lap;
-  if (p.nextCheckpoint !== undefined) kart.nextCheckpoint = p.nextCheckpoint;
-  if (p.checkpointsThisLap !== undefined) kart.checkpointsThisLap = p.checkpointsThisLap;
-  if (p.finishTime !== undefined) kart.finishTime = p.finishTime;
-  kart.activeQuote = p.activeQuote;
-  kart.quoteTimer = p.quoteTimer;
-  kart.spinoutTimer = p.spinoutTimer;
-  kart.coinsCollected = p.coinsCollected;
-  kart.mergePullTimer = p.mergePullTimer || 0;
-  kart.mergePullTargetId = p.mergePullTargetId || null;
+  if ((p.nextCheckpoint ?? p.nc) !== undefined) kart.nextCheckpoint = p.nextCheckpoint ?? p.nc;
+  if ((p.checkpointsThisLap ?? p.cl) !== undefined) kart.checkpointsThisLap = p.checkpointsThisLap ?? p.cl;
+  if ((p.finishTime ?? p.ft) !== undefined) kart.finishTime = p.finishTime ?? p.ft;
+  kart.activeQuote = p.activeQuote ?? p.aq ?? null;
+  kart.quoteTimer = p.quoteTimer ?? p.qt ?? 0;
+  kart.spinoutTimer = p.spinoutTimer ?? p.sp ?? 0;
+  kart.coinsCollected = p.coinsCollected ?? p.cc ?? 0;
+  kart.mergePullTimer = p.mergePullTimer ?? p.mp ?? 0;
+  kart.mergePullTargetId = p.mergePullTargetId ?? p.mt ?? null;
   kart.mergePullTarget = getKartById(kart.mergePullTargetId);
-  if (p.ultCharge !== undefined) kart.ultCharge = p.ultCharge;
-  if (p.ultReady !== undefined) kart.ultReady = !!p.ultReady;
-  if (p.ultActiveTimer !== undefined) kart.ultActiveTimer = p.ultActiveTimer;
-  if (p.ultTier !== undefined) kart.ultTier = p.ultTier;
+  if ((p.ultCharge ?? p.uc) !== undefined) kart.ultCharge = p.ultCharge ?? p.uc ?? 0;
+  if ((p.ultReady ?? p.ur) !== undefined) kart.ultReady = !!(p.ultReady ?? p.ur);
+  if ((p.ultActiveTimer ?? p.ua) !== undefined) kart.ultActiveTimer = p.ultActiveTimer ?? p.ua ?? 0;
+  if ((p.ultTier ?? p.ut) !== undefined) kart.ultTier = p.ultTier ?? p.ut ?? 0;
 }
 
 function serializeDragonState(dragon) {
@@ -13585,113 +13836,104 @@ function applyDragonState(state) {
   dragon.active = state.active !== false;
 }
 
+function serializeKartCompact(k) {
+  if (!k) return null;
+  return {
+    x: Math.round(k.x * 10) / 10,
+    y: Math.round(k.y * 10) / 10,
+    h: Math.round(k.heading * 1000) / 1000,
+    vx: Math.round(k.vx * 100) / 100,
+    vy: Math.round(k.vy * 100) / 100,
+    bt: k.boostTimer > 0 ? k.boostTimer : undefined,
+    st: k.shieldTimer > 0 ? k.shieldTimer : undefined,
+    sp: k.spinoutTimer > 0 ? k.spinoutTimer : undefined,
+    it: k.itemSlot || undefined,
+    is: k.itemState !== "empty" ? k.itemState : undefined,
+    fin: k.finished || undefined,
+    elim: k.eliminated || undefined,
+    lap: k.lap,
+    aq: k.activeQuote || undefined,
+    qt: k.quoteTimer > 0 ? k.quoteTimer : undefined,
+    cc: k.coinsCollected || undefined,
+    mp: k.mergePullTimer > 0 ? k.mergePullTimer : undefined,
+    mt: k.mergePullTargetId || undefined,
+    uc: k.ultCharge > 0 ? Math.round(k.ultCharge) : undefined,
+    ur: k.ultReady || undefined,
+    ua: k.ultActiveTimer > 0 ? k.ultActiveTimer : undefined,
+    ut: k.ultTier > 0 ? k.ultTier : undefined,
+    cbt: k.citationBoostTimer > 0 ? k.citationBoostTimer : undefined,
+    dbt: k.doubleBlindTimer > 0 ? k.doubleBlindTimer : undefined,
+    pst: k.placeboSlowTimer > 0 ? k.placeboSlowTimer : undefined,
+    nc: k.nextCheckpoint,
+    cl: k.checkpointsThisLap,
+    ft: k.finishTime || undefined,
+  };
+}
+
+function serializeHazardCompact(h) {
+  const type = (h instanceof DossierProjectile) ? 1 :
+    (h instanceof RegulatoryProjectile) ? 2 :
+    (h instanceof PlaceboPill) ? 3 :
+    (h instanceof DoubleBlindCloud) ? 4 :
+    (h instanceof DragonFire) ? 5 : 0;
+  const out = {
+    id: h.hid,
+    t: type,
+    x: Math.round(h.x * 10) / 10,
+    y: Math.round(h.y * 10) / 10,
+  };
+  if (h.heading) out.h = Math.round(h.heading * 1000) / 1000;
+  if (h.vx) out.vx = Math.round(h.vx * 100) / 100;
+  if (h.vy) out.vy = Math.round(h.vy * 100) / 100;
+  if (h.speed) out.sp = Math.round(h.speed * 100) / 100;
+  if (h.spin) out.sn = Math.round(h.spin * 100) / 100;
+  if (h.life) out.li = Math.round(h.life);
+  if (h.r && h.r !== 18 && h.r !== 15 && h.r !== 12 && h.r !== 17 && h.r !== 20) out.r = h.r;
+  if (h.enraged) out.en = 1;
+  if (h.owner) out.oi = getKartId(h.owner);
+  if (h.ignoreOwnerTimer > 0) out.io = Math.round(h.ignoreOwnerTimer);
+  return out;
+}
+
 function sendHostSync() {
   if (!game.player) return;
   const now = performance.now();
   const includePickupState = !game.p2pLastPickupSyncAt ||
     now - game.p2pLastPickupSyncAt >= TUNING.P2P_PICKUP_FULL_SYNC_INTERVAL_MS;
+  const includeHazards = !game.p2pLastHazardSyncAt ||
+    now - game.p2pLastHazardSyncAt >= (1000 / TUNING.P2P_HAZARD_SYNC_HZ);
   const sync = {
     type: "host_sync",
-    raceTime: game.raceTime,
-    state: game.state,
-    dragon: serializeDragonState(game.track && game.track.regulatoryDragon),
-    players: (game.p2pPlayers || []).map(p => ({
+    rt: game.raceTime,
+    gs: game.state,
+    dr: serializeDragonState(game.track && game.track.regulatoryDragon),
+    pl: (game.p2pPlayers || []).map(p => ({
       id: p.id,
-      state: serializeKartState(getKartById(p.id))
+      s: serializeKartCompact(getKartById(p.id))
     })),
-    p2: {
-      x: game.player.x,
-      y: game.player.y,
-      heading: game.player.heading,
-      vx: game.player.vx,
-      vy: game.player.vy,
-      boostTimer: game.player.boostTimer,
-      shieldTimer: game.player.shieldTimer,
-      itemSlot: game.player.itemSlot,
-      itemState: game.player.itemState,
-      finished: game.player.finished,
-      lap: game.player.lap,
-      activeQuote: game.player.activeQuote,
-      quoteTimer: game.player.quoteTimer,
-      spinoutTimer: game.player.spinoutTimer,
-      coinsCollected: game.player.coinsCollected,
-      mergePullTimer: game.player.mergePullTimer || 0,
-      mergePullTargetId: game.player.mergePullTargetId || null
-    },
-    ais: game.ais.map(ai => ({
-      x: ai.x,
-      y: ai.y,
-      heading: ai.heading,
-      vx: ai.vx,
-      vy: ai.vy,
-      boostTimer: ai.boostTimer,
-      shieldTimer: ai.shieldTimer,
-      finished: ai.finished,
-      lap: ai.lap,
-      spinoutTimer: ai.spinoutTimer,
-      activeQuote: ai.activeQuote,
-      quoteTimer: ai.quoteTimer,
-      mergePullTimer: ai.mergePullTimer || 0,
-      mergePullTargetId: ai.mergePullTargetId || null
-    })),
-    hazards: (game.hazards || []).map(h => ({
-      isDossier: h instanceof DossierProjectile,
-      isRegulatory: h instanceof RegulatoryProjectile,
-      isPlacebo: h instanceof PlaceboPill,
-      isDoubleBlind: h instanceof DoubleBlindCloud,
-      enraged: h.enraged || false,
-      isDragonFire: h instanceof DragonFire,
-      x: h.x,
-      y: h.y,
-      heading: h.heading || 0,
-      vx: h.vx || 0,
-      vy: h.vy || 0,
-      speed: h.speed || 0,
-      spin: h.spin || 0,
-      active: h.active,
-      ownerId: getKartId(h.owner),
-      ignoreOwnerTimer: h.ignoreOwnerTimer || 0,
-      life: h.life || 0,
-      r: h.r || 0,
-      pulsePhase: h.pulsePhase || 0,
-      sizePhase: h.sizePhase || 0
-    }))
+    p2: serializeKartCompact(game.player),
+    ai: game.ais.map(ai => serializeKartCompact(ai)),
   };
+  if (includeHazards) {
+    game.p2pLastHazardSyncAt = now;
+    sync.hz = (game.hazards || []).map(serializeHazardCompact);
+  }
   if (includePickupState) {
     game.p2pLastPickupSyncAt = now;
-    sync.coins = game.track.coins.map(c => c.collected);
-    sync.itemBoxes = game.track.itemBoxes.map(b => b.active);
+    sync.co = game.track.coins.map(c => c.collected ? 1 : 0);
+    sync.ib = game.track.itemBoxes.map(b => b.active ? 1 : 0);
   }
   sendP2pMessage(sync);
 }
 
 function sendGuestSync() {
   if (!game.player) return;
-  const sync = {
+  sendP2pMessage({
     type: "guest_sync",
     playerId: game.p2pLocalId || "guest",
     state: serializeKartState(game.player),
-    p2: {
-      x: game.player.x,
-      y: game.player.y,
-      heading: game.player.heading,
-      vx: game.player.vx,
-      vy: game.player.vy,
-      boostTimer: game.player.boostTimer,
-      shieldTimer: game.player.shieldTimer,
-      itemSlot: game.player.itemSlot,
-      itemState: game.player.itemState,
-      finished: game.player.finished,
-      lap: game.player.lap,
-      activeQuote: game.player.activeQuote,
-      quoteTimer: game.player.quoteTimer,
-      spinoutTimer: game.player.spinoutTimer,
-      coinsCollected: game.player.coinsCollected,
-      mergePullTimer: game.player.mergePullTimer || 0,
-      mergePullTargetId: game.player.mergePullTargetId || null
-    }
-  };
-  sendP2pMessage(sync);
+    p2: serializeKartCompact(game.player),
+  });
 }
 
 function handleP2pDisconnect({ silent = false } = {}) {
@@ -13754,6 +13996,17 @@ function handleP2pDisconnect({ silent = false } = {}) {
 
 function handleP2pData(data, sourceConn = null) {
   if (!data) return;
+
+  if (data.type === "ping") {
+    const reply = { type: "pong", t: data.t };
+    if (sourceConn) sendToConn(sourceConn, reply);
+    else sendP2pMessage(reply);
+    return;
+  }
+  if (data.type === "pong") {
+    game.p2pPing = Math.round(performance.now() - data.t);
+    return;
+  }
 
   if (data.type === "lobby_connected") {
     game.p2pMode = true;
@@ -13848,29 +14101,32 @@ function handleP2pData(data, sourceConn = null) {
   }
 
   else if (data.type === "host_sync") {
-    if (data.state !== undefined) {
-      if (game.state !== data.state) {
-        if (data.state === STATE.FINISHED) {
+    const gs = data.gs ?? data.state;
+    if (gs !== undefined) {
+      if (game.state !== gs) {
+        if (gs === STATE.FINISHED) {
           game.state = STATE.FINISHED;
           showFinishScreen();
         } else {
-          game.state = data.state;
+          game.state = gs;
         }
       }
     }
-    if (data.raceTime !== undefined) game.raceTime = data.raceTime;
-    if (data.dragon) applyDragonState(data.dragon);
+    if ((data.rt ?? data.raceTime) !== undefined) game.raceTime = data.rt ?? data.raceTime;
+    if (data.dr ?? data.dragon) applyDragonState(data.dr ?? data.dragon);
 
-    if (data.players) {
-      for (const playerState of data.players) {
-        if (!playerState) continue;
-        if (playerState.id === game.p2pLocalId) {
-          if (playerState.state && playerState.state.eliminated) {
-            applyKartState(game.player, playerState.state);
+    const players = data.pl ?? data.players;
+    if (players) {
+      for (const ps of players) {
+        if (!ps) continue;
+        const state = ps.s ?? ps.state;
+        if (ps.id === game.p2pLocalId) {
+          if (state && (state.eliminated || state.elim)) {
+            applyKartState(game.player, state);
           }
           continue;
         }
-        applyKartState(getKartById(playerState.id), playerState.state, { smooth: true });
+        applyKartState(getKartById(ps.id), state, { smooth: true });
       }
     }
 
@@ -13878,75 +14134,83 @@ function handleP2pData(data, sourceConn = null) {
       applyKartState(game.player2, data.p2, { smooth: true });
     }
 
-    if (game.ais && data.ais) {
+    const ais = data.ai ?? data.ais;
+    if (game.ais && ais) {
       for (let i = 0; i < game.ais.length; i++) {
-        if (data.ais[i]) {
-          applyKartState(game.ais[i], data.ais[i], { smooth: true });
+        if (ais[i]) {
+          applyKartState(game.ais[i], ais[i], { smooth: true });
         }
       }
     }
 
-    if (data.coins) {
+    const coins = data.co ?? data.coins;
+    if (coins) {
       for (let i = 0; i < game.track.coins.length; i++) {
-        game.track.coins[i].collected = data.coins[i];
+        game.track.coins[i].collected = !!coins[i];
       }
     }
 
-    if (data.itemBoxes) {
+    const ibs = data.ib ?? data.itemBoxes;
+    if (ibs) {
       for (let i = 0; i < game.track.itemBoxes.length; i++) {
-        game.track.itemBoxes[i].active = data.itemBoxes[i];
+        game.track.itemBoxes[i].active = !!ibs[i];
       }
     }
 
-    if (data.hazards) {
-      game.hazards = data.hazards.map(h => {
-        if (h.isDossier) {
-          const ownerKart = getKartById(h.ownerId);
-          const dp = new DossierProjectile(h.x, h.y, h.heading, ownerKart);
-          dp.vx = h.vx;
-          dp.vy = h.vy;
-          dp.spin = h.spin;
-          dp.active = h.active;
-          dp.ignoreOwnerTimer = h.ignoreOwnerTimer !== undefined ? h.ignoreOwnerTimer : 0;
-          return dp;
-        } else if (h.isRegulatory) {
-          const rp = new RegulatoryProjectile(h.x, h.y, h.heading, h.speed || 8.4, h.enraged || false);
-          rp.vx = h.vx;
-          rp.vy = h.vy;
-          rp.spin = h.spin;
-          rp.active = h.active;
-          return rp;
-        } else if (h.isDragonFire) {
-          const df = new DragonFire(h.x, h.y, h.heading, h.speed);
-          df.vx = h.vx;
-          df.vy = h.vy;
-          df.life = h.life;
-          df.r = h.r || 18;
-          df.pulsePhase = h.pulsePhase || 0;
-          df.sizePhase = h.sizePhase || 0;
-          df.active = h.active !== false;
-          return df;
-        } else if (h.isPlacebo) {
-          const pp = new PlaceboPill(h.x, h.y, getKartById(h.ownerId));
-          pp.spin = h.spin;
-          pp.active = h.active !== false;
-          return pp;
-        } else if (h.isDoubleBlind) {
-          const db = new DoubleBlindCloud(h.x, h.y, h.heading, getKartById(h.ownerId));
-          db.vx = h.vx;
-          db.vy = h.vy;
-          db.life = h.life || 120;
-          db.r = h.r || 48;
-          db.phase = h.pulsePhase || 0;
-          db.active = h.active !== false;
-          return db;
+    const hazards = data.hz ?? data.hazards;
+    if (hazards) {
+      const existingById = new Map();
+      for (const h of (game.hazards || [])) {
+        if (h.hid) existingById.set(h.hid, h);
+      }
+      const newHazards = [];
+      for (const h of hazards) {
+        const hid = h.id ?? h.hid;
+        const type = h.t;
+        let existing = hid ? existingById.get(hid) : null;
+        if (existing) {
+          existing.x = h.x;
+          existing.y = h.y;
+          if (h.h !== undefined || h.heading !== undefined) existing.heading = h.h ?? h.heading;
+          if (h.vx !== undefined) existing.vx = h.vx;
+          if (h.vy !== undefined) existing.vy = h.vy;
+          if (h.sn !== undefined || h.spin !== undefined) existing.spin = h.sn ?? h.spin ?? existing.spin;
+          if (h.li !== undefined || h.life !== undefined) existing.life = h.li ?? h.life ?? existing.life;
+          if (h.r !== undefined) existing.r = h.r;
+          existing.active = h.active !== false;
+          if (h.io !== undefined || h.ignoreOwnerTimer !== undefined) existing.ignoreOwnerTimer = h.io ?? h.ignoreOwnerTimer ?? 0;
+          existingById.delete(hid);
+          newHazards.push(existing);
         } else {
-          const mc = new MergeConflict(h.x, h.y);
-          mc.spin = h.spin;
-          mc.active = h.active;
-          return mc;
+          let obj;
+          const hType = type ?? ((h.isDossier) ? 1 : (h.isRegulatory) ? 2 : (h.isPlacebo) ? 3 : (h.isDoubleBlind) ? 4 : (h.isDragonFire) ? 5 : 0);
+          const heading = h.h ?? h.heading ?? 0;
+          const speed = h.sp ?? h.speed ?? 8;
+          if (hType === 1) {
+            obj = new DossierProjectile(h.x, h.y, heading, getKartById(h.oi ?? h.ownerId));
+          } else if (hType === 2) {
+            obj = new RegulatoryProjectile(h.x, h.y, heading, speed, !!(h.en ?? h.enraged));
+          } else if (hType === 3) {
+            obj = new PlaceboPill(h.x, h.y, getKartById(h.oi ?? h.ownerId));
+          } else if (hType === 4) {
+            obj = new DoubleBlindCloud(h.x, h.y, heading, getKartById(h.oi ?? h.ownerId));
+          } else if (hType === 5) {
+            obj = new DragonFire(h.x, h.y, heading, speed);
+          } else {
+            obj = new MergeConflict(h.x, h.y);
+          }
+          if (hid) obj.hid = hid;
+          if (h.vx !== undefined) obj.vx = h.vx;
+          if (h.vy !== undefined) obj.vy = h.vy;
+          if (h.sn !== undefined || h.spin !== undefined) obj.spin = h.sn ?? h.spin ?? obj.spin;
+          if (h.li !== undefined || h.life !== undefined) obj.life = h.li ?? h.life ?? obj.life;
+          if (h.r !== undefined) obj.r = h.r;
+          if (h.io !== undefined || h.ignoreOwnerTimer !== undefined) obj.ignoreOwnerTimer = h.io ?? h.ignoreOwnerTimer ?? 0;
+          obj.active = h.active !== false;
+          newHazards.push(obj);
         }
-      });
+      }
+      game.hazards = newHazards;
     }
   }
 
@@ -13961,7 +14225,6 @@ function handleP2pData(data, sourceConn = null) {
         kartId: requesterId,
         coinsCollected: requester ? requester.coinsCollected : undefined
       });
-      sendHostSync();
     }
   }
 
