@@ -948,6 +948,35 @@ let peer = null;
 let p2pConnections = new Map();
 let crtOverlayEnabled = false;
 
+const SETTINGS_STORAGE_KEY = "turboKartDash.settings.v1";
+const savedSettings = loadGameSettings();
+
+function loadGameSettings() {
+  try {
+    const raw = localStorage.getItem(SETTINGS_STORAGE_KEY);
+    if (!raw) return {};
+    const parsed = JSON.parse(raw);
+    return parsed && typeof parsed === "object" ? parsed : {};
+  } catch (e) {
+    return {};
+  }
+}
+
+function saveGameSettings(patch = {}) {
+  try {
+    const next = {
+      viewMode: game?.viewMode || savedSettings.viewMode || "2d",
+      musicTrack: Sound?.trackIdx ?? savedSettings.musicTrack ?? 0,
+      crtOverlay: !!crtOverlayEnabled,
+      muted: !!Sound?.muted,
+      ...patch,
+    };
+    localStorage.setItem(SETTINGS_STORAGE_KEY, JSON.stringify(next));
+  } catch (e) {
+    // Storage can be unavailable in private mode or sandboxed embeds.
+  }
+}
+
 // ---- Game Tuning Constants ----
 const TUNING = {
   // Item effect durations (in frames, ~60fps)
@@ -2109,7 +2138,7 @@ const Sound = {
   reverbLowpass: null,
   reverb: null,
   reverbReturn: null,
-  muted: false,
+  muted: !!savedSettings.muted,
 
   // Player 1 oscillators & gains
   engineOscP1: null,
@@ -2186,6 +2215,7 @@ const Sound = {
   setMuted(m) {
     this.muted = m;
     if (this.master) this.master.gain.value = m ? 0 : 0.45;
+    saveGameSettings({ muted: this.muted });
   },
 
   tone(freq, dur, type = "square", vol = 0.18, freqEnd, attack = 0.005, pan = 0) {
@@ -2822,7 +2852,7 @@ const Sound = {
       style: "Minimal Techno"
     }
   ],
-  trackIdx: null,
+  trackIdx: Number.isInteger(savedSettings.musicTrack) ? savedSettings.musicTrack : null,
   toastTimeout: null,
 
   showTrackToast() {
@@ -2963,6 +2993,7 @@ const Sound = {
     const safeIdx = Math.floor(Math.max(0, Math.min(newIdx, this.tracks.length - 1)));
     this.stopMusic(true);
     this.trackIdx = safeIdx;
+    saveGameSettings({ musicTrack: safeIdx });
     const t = this.tracks[safeIdx];
     this.tempo = t.tempo;
     if (game.player && game.player.lap >= TOTAL_LAPS - 1) {
@@ -5957,17 +5988,20 @@ let _hazardIdCounter = 0;
 function nextHazardId() { return ++_hazardIdCounter; }
 
 class MergeConflict {
-  constructor(x, y) {
+  constructor(x, y, owner = null) {
     this.hid = nextHazardId();
     this.x = x;
     this.y = y;
+    this.owner = owner;
     this.r = 15;
     this.spin = Math.random() * Math.PI * 2;
     this.active = true;
+    this.ignoreOwnerTimer = 28;
   }
 
   update(dt) {
     this.spin += 0.08 * dt;
+    if (this.ignoreOwnerTimer > 0) this.ignoreOwnerTimer -= dt;
   }
 
   draw(ctx, time) {
@@ -6456,7 +6490,7 @@ class Kart {
       const fx = Math.cos(this.heading), fy = Math.sin(this.heading);
       const dropX = this.x - fx * 32;
       const dropY = this.y - fy * 32;
-      const h = new MergeConflict(dropX, dropY);
+      const h = new MergeConflict(dropX, dropY, this);
       game.hazards.push(h);
       if (game.p2pMode && game.p2pRole === "guest") {
         sendP2pMessage({
@@ -7655,7 +7689,7 @@ const game = {
   countdownText: "",
   rocketStartP1: { holdStart: 0, holding: false, result: null },
   rocketStartP2: { holdStart: 0, holding: false, result: null },
-  viewMode: "2d",
+  viewMode: savedSettings.viewMode === "3d" ? "3d" : "2d",
   shake: 0,
   flash: 0,
   cam: { x: 0, y: 0, scale: 1 },
@@ -9426,7 +9460,7 @@ function update(dt, time) {
         }
 
         for (const kart of activeKarts) {
-          if (h instanceof DossierProjectile && h.owner === kart && h.ignoreOwnerTimer > 0) {
+          if ((h instanceof DossierProjectile || h instanceof MergeConflict) && h.owner === kart && h.ignoreOwnerTimer > 0) {
             continue;
           }
           if ((h instanceof PlaceboPill || h instanceof DoubleBlindCloud) && h.owner === kart) {
@@ -10235,6 +10269,7 @@ function loadThreeJS(callback) {
 
 function setViewMode(mode) {
   game.viewMode = mode;
+  saveGameSettings({ viewMode: mode });
   const is3d = mode === "3d";
   canvas.style.display = is3d ? "none" : "block";
   canvas3d.style.display = is3d ? "block" : "none";
@@ -13433,6 +13468,7 @@ function setMusicTrack(idx) {
     if (game.player && game.player.lap >= TOTAL_LAPS - 1) {
       Sound.tempo = track.tempo + TUNING.FINAL_LAP_TEMPO_BOOST;
     }
+    saveGameSettings({ musicTrack: safeIdx });
   }
   renderMusicSettings();
   if (Sound.isPlayingMusic) {
@@ -13453,7 +13489,19 @@ function setCrtOverlayEnabled(enabled) {
   crtOverlay.classList.toggle("active", enabled);
   crtToggleBtn.classList.toggle("active", enabled);
   crtToggleBtn.textContent = enabled ? "CRT Overlay: On" : "CRT Overlay: Off";
+  saveGameSettings({ crtOverlay: enabled });
 }
+
+function applyStoredSettings() {
+  if (Number.isFinite(savedSettings.musicTrack)) {
+    setMusicTrack(savedSettings.musicTrack);
+  }
+  setCrtOverlayEnabled(!!savedSettings.crtOverlay);
+  setViewMode(savedSettings.viewMode === "3d" ? "3d" : "2d");
+  Sound.setMuted(!!savedSettings.muted);
+}
+
+applyStoredSettings();
 
 /* ============================================================
    START / RESTART HOOKS
@@ -13863,6 +13911,37 @@ function applyKartState(kart, p, opts = {}) {
   if ((p.ultTier ?? p.ut) !== undefined) kart.ultTier = p.ultTier ?? p.ut ?? 0;
 }
 
+function applyLocalAuthoritativeEffects(kart, p) {
+  if (!kart || !p) return;
+  const remoteSpinout = p.spinoutTimer ?? p.sp ?? 0;
+  if (remoteSpinout > (kart.spinoutTimer || 0) + 2) {
+    kart.spinoutTimer = remoteSpinout;
+    kart.spinAngle = 0;
+    kart.vx = p.vx ?? kart.vx;
+    kart.vy = p.vy ?? kart.vy;
+    if (Number.isFinite(p.x) && Number.isFinite(p.y)) {
+      kart.x = p.x;
+      kart.y = p.y;
+    }
+    triggerHitFlash("BLACK ICE!", "#57f2ff", 75, kart);
+  }
+
+  const remoteShield = p.shieldTimer ?? p.st;
+  if (remoteShield !== undefined && remoteShield < (kart.shieldTimer || 0)) {
+    kart.shieldTimer = remoteShield;
+  }
+
+  const remoteDoubleBlind = p.doubleBlindTimer ?? p.dbt ?? 0;
+  if (remoteDoubleBlind > (kart.doubleBlindTimer || 0)) kart.doubleBlindTimer = remoteDoubleBlind;
+
+  const remotePlacebo = p.placeboSlowTimer ?? p.pst ?? 0;
+  if (remotePlacebo > (kart.placeboSlowTimer || 0)) kart.placeboSlowTimer = remotePlacebo;
+
+  if (p.eliminated || p.elim) {
+    applyKartState(kart, p);
+  }
+}
+
 function serializeDragonState(dragon) {
   if (!dragon) return null;
   return {
@@ -14179,9 +14258,7 @@ function handleP2pData(data, sourceConn = null) {
         if (!ps) continue;
         const state = ps.s ?? ps.state;
         if (ps.id === game.p2pLocalId) {
-          if (state && (state.eliminated || state.elim)) {
-            applyKartState(game.player, state);
-          }
+          applyLocalAuthoritativeEffects(game.player, state);
           continue;
         }
         applyKartState(getKartById(ps.id), state, { smooth: true });
@@ -14255,7 +14332,7 @@ function handleP2pData(data, sourceConn = null) {
           } else if (hType === 5) {
             obj = new DragonFire(h.x, h.y, heading, speed);
           } else {
-            obj = new MergeConflict(h.x, h.y);
+            obj = new MergeConflict(h.x, h.y, getKartById(h.oi ?? h.ownerId));
           }
           if (hid) obj.hid = hid;
           if (h.vx !== undefined) obj.vx = h.vx;
@@ -14313,7 +14390,7 @@ function handleP2pData(data, sourceConn = null) {
 
   else if (data.type === "drop_conflict") {
     if (game.p2pMode && game.p2pRole === "host" && game.player2) {
-      const h = new MergeConflict(data.x, data.y);
+      const h = new MergeConflict(data.x, data.y, getKartById(data.kartId));
       game.hazards.push(h);
     }
   }
