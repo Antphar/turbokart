@@ -2694,8 +2694,10 @@ const Sound = {
 
     // 2b. Chords/arps/pads
     if (playChords) {
-      if (track === 4 && bar < 6 && (stepInBar === 0)) {
-        this.playDowntempoPad(this.getChordFreqs(track, bar), time, stepDur * 14);
+      if (track === 0 && stepInBar === 0) {
+        this.playJunoPad(this.getChordFreqs(track, bar), time, stepDur * 15);
+      } else if (track === 4 && bar < 6 && (stepInBar === 0)) {
+        this.playRhodesPad(this.getChordFreqs(track, bar), time, stepDur * 14);
       } else if (track === 5 && bar >= 4 && stepInBar === 0) {
         this.playDowntempoPad(this.getChordFreqs(track, bar), time, stepDur * 12);
       } else if (track === 3 && bar < 6 && (stepInBar === 2 || stepInBar === 6 || stepInBar === 10 || stepInBar === 14)) {
@@ -2752,6 +2754,9 @@ const Sound = {
       if (bar !== 6) {
         if (stepInBar === 0 || stepInBar === 4 || stepInBar === 8 || stepInBar === 12) {
           this.playRetroKick(time, true);
+        }
+        if (stepInBar === 0 && bar === 0) {
+          this.playCrashCymbal(time);
         }
         if (fullDrums && (stepInBar === 2 || stepInBar === 6 || stepInBar === 10 || stepInBar === 14)) {
           this.playRetroHiHat(time, true);
@@ -3202,45 +3207,37 @@ const Sound = {
 
   playDowntempoPad(freqs, time, dur) {
     if (!this.ctx || this.muted) return;
-
     const filter = this.ctx.createBiquadFilter();
     filter.type = "lowpass";
     filter.Q.setValueAtTime(0.8, time);
     filter.frequency.setValueAtTime(900, time);
     filter.frequency.linearRampToValueAtTime(1400, time + dur * 0.4);
     filter.frequency.exponentialRampToValueAtTime(400, time + dur);
-
     const gain = this.ctx.createGain();
     gain.gain.setValueAtTime(0.001, time);
     gain.gain.linearRampToValueAtTime(0.06, time + dur * 0.15);
     gain.gain.setValueAtTime(0.05, time + dur * 0.5);
     gain.gain.exponentialRampToValueAtTime(0.001, time + dur);
-
     freqs.forEach((freq, idx) => {
       const osc = this.ctx.createOscillator();
       osc.type = "sawtooth";
       osc.frequency.setValueAtTime(freq, time);
       osc.detune.setValueAtTime((idx - 1.5) * 12 + Math.sin(idx * 2.1) * 5, time);
-
       const osc2 = this.ctx.createOscillator();
       osc2.type = "triangle";
       osc2.frequency.setValueAtTime(freq * 1.002, time);
       osc2.detune.setValueAtTime((idx - 1.5) * -8, time);
       const osc2Gain = this.ctx.createGain();
       osc2Gain.gain.value = 0.6;
-
       osc.connect(filter);
       osc2.connect(osc2Gain);
       osc2Gain.connect(filter);
-
       osc.start(time);
       osc.stop(time + dur + 0.05);
       osc2.start(time);
       osc2.stop(time + dur + 0.05);
     });
-
     filter.connect(gain);
-
     if (this.ctx.createStereoPanner) {
       const panner = this.ctx.createStereoPanner();
       const lfo = this.ctx.createOscillator();
@@ -3251,9 +3248,98 @@ const Sound = {
       lfoGain.connect(panner.pan);
       lfo.start(time);
       lfo.stop(time + dur + 0.05);
-
       gain.connect(panner);
       panner.connect(this.musicGain);
+    } else {
+      gain.connect(this.musicGain);
+    }
+  },
+
+  playJunoPad(freqs, time, dur) {
+    if (!this.ctx || this.muted) return;
+    const filter = this.ctx.createBiquadFilter();
+    filter.type = "lowpass";
+    filter.Q.setValueAtTime(1.2, time);
+    filter.frequency.setValueAtTime(1200, time);
+    filter.frequency.linearRampToValueAtTime(2200, time + dur * 0.35);
+    filter.frequency.exponentialRampToValueAtTime(600, time + dur);
+    const gain = this.ctx.createGain();
+    gain.gain.setValueAtTime(0.001, time);
+    gain.gain.linearRampToValueAtTime(0.038, time + dur * 0.12);
+    gain.gain.setValueAtTime(0.032, time + dur * 0.6);
+    gain.gain.exponentialRampToValueAtTime(0.001, time + dur);
+    freqs.forEach((freq, idx) => {
+      const osc = this.ctx.createOscillator();
+      osc.type = "sawtooth";
+      osc.frequency.setValueAtTime(freq, time);
+      osc.detune.setValueAtTime((idx - 1) * 7 + rand(-3, 3), time);
+      const osc2 = this.ctx.createOscillator();
+      osc2.type = "sawtooth";
+      osc2.frequency.setValueAtTime(freq, time);
+      osc2.detune.setValueAtTime((idx - 1) * -7 + rand(-3, 3), time);
+      osc.connect(filter);
+      osc2.connect(filter);
+      osc.start(time);
+      osc.stop(time + dur + 0.05);
+      osc2.start(time);
+      osc2.stop(time + dur + 0.05);
+    });
+    const chorus = this.ctx.createDelay(0.03);
+    chorus.delayTime.setValueAtTime(0.012, time);
+    const chorusLfo = this.ctx.createOscillator();
+    const chorusDepth = this.ctx.createGain();
+    chorusLfo.frequency.value = 0.8;
+    chorusDepth.gain.value = 0.003;
+    chorusLfo.connect(chorusDepth);
+    chorusDepth.connect(chorus.delayTime);
+    chorusLfo.start(time);
+    chorusLfo.stop(time + dur + 0.05);
+    filter.connect(chorus);
+    chorus.connect(gain);
+    filter.connect(gain);
+    gain.connect(this.musicGain);
+  },
+
+  playRhodesPad(freqs, time, dur) {
+    if (!this.ctx || this.muted) return;
+    const gain = this.ctx.createGain();
+    gain.gain.setValueAtTime(0.001, time);
+    gain.gain.linearRampToValueAtTime(0.05, time + 0.008);
+    gain.gain.exponentialRampToValueAtTime(0.025, time + dur * 0.3);
+    gain.gain.exponentialRampToValueAtTime(0.001, time + dur);
+    freqs.forEach((freq, idx) => {
+      const osc = this.ctx.createOscillator();
+      osc.type = "sine";
+      osc.frequency.setValueAtTime(freq, time);
+      const osc2 = this.ctx.createOscillator();
+      osc2.type = "sine";
+      osc2.frequency.setValueAtTime(freq * 2, time);
+      const osc2g = this.ctx.createGain();
+      osc2g.gain.setValueAtTime(0.3, time);
+      osc2g.gain.exponentialRampToValueAtTime(0.02, time + dur * 0.5);
+      const osc3 = this.ctx.createOscillator();
+      osc3.type = "sine";
+      osc3.frequency.setValueAtTime(freq * 3.01, time);
+      const osc3g = this.ctx.createGain();
+      osc3g.gain.setValueAtTime(0.12, time);
+      osc3g.gain.exponentialRampToValueAtTime(0.001, time + dur * 0.25);
+      osc.connect(gain);
+      osc2.connect(osc2g);
+      osc2g.connect(gain);
+      osc3.connect(osc3g);
+      osc3g.connect(gain);
+      osc.start(time);
+      osc.stop(time + dur + 0.03);
+      osc2.start(time);
+      osc2.stop(time + dur + 0.03);
+      osc3.start(time);
+      osc3.stop(time + dur + 0.03);
+    });
+    if (this.ctx.createStereoPanner) {
+      const pan = this.ctx.createStereoPanner();
+      pan.pan.setValueAtTime(rand(-0.3, 0.3), time);
+      gain.connect(pan);
+      pan.connect(this.musicGain);
     } else {
       gain.connect(this.musicGain);
     }
@@ -3264,20 +3350,35 @@ const Sound = {
     const osc = this.ctx.createOscillator();
     const gain = this.ctx.createGain();
 
-    osc.type = "triangle";
+    osc.type = "square";
 
-    // Sweep the frequencies sequentially at 45ms sweeps!
-    const arpSpeed = 0.045; // 45ms per step
+    const pwmLfo = this.ctx.createOscillator();
+    const pwmGain = this.ctx.createGain();
+    pwmLfo.frequency.value = 3.2;
+    pwmGain.gain.value = 18;
+    pwmLfo.connect(pwmGain);
+    pwmGain.connect(osc.detune);
+    pwmLfo.start(time);
+    pwmLfo.stop(time + dur + 0.02);
+
+    const arpSpeed = 0.042;
     let t = time;
     let idx = 0;
     while (t < time + dur) {
-      osc.frequency.setValueAtTime(freqs[idx % freqs.length], t);
+      const freq = freqs[idx % freqs.length];
+      const prevFreq = idx > 0 ? freqs[(idx - 1) % freqs.length] : freq;
+      if (idx > 0 && Math.abs(freq - prevFreq) > 20) {
+        osc.frequency.setValueAtTime(prevFreq, t);
+        osc.frequency.exponentialRampToValueAtTime(freq, t + arpSpeed * 0.3);
+      } else {
+        osc.frequency.setValueAtTime(freq, t);
+      }
       idx++;
       t += arpSpeed;
     }
 
     gain.gain.setValueAtTime(0.001, time);
-    gain.gain.linearRampToValueAtTime(0.045, time + 0.015);
+    gain.gain.linearRampToValueAtTime(0.05, time + 0.012);
     gain.gain.exponentialRampToValueAtTime(0.001, time + dur);
 
     osc.connect(gain);
@@ -3626,6 +3727,30 @@ const Sound = {
       gain.connect(this.musicGain);
       src.start(time + offset);
     }
+  },
+
+  playCrashCymbal(time) {
+    if (!this.ctx || this.muted) return;
+    const dur = 0.45;
+    const bufferSize = Math.max(1, Math.floor(this.ctx.sampleRate * dur));
+    const buffer = this.ctx.createBuffer(1, bufferSize, this.ctx.sampleRate);
+    const data = buffer.getChannelData(0);
+    for (let i = 0; i < bufferSize; i++) {
+      data[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / bufferSize, 1.8);
+    }
+    const src = this.ctx.createBufferSource();
+    src.buffer = buffer;
+    const hp = this.ctx.createBiquadFilter();
+    hp.type = "highpass";
+    hp.frequency.setValueAtTime(5000, time);
+    hp.frequency.exponentialRampToValueAtTime(2800, time + dur);
+    const gain = this.ctx.createGain();
+    gain.gain.setValueAtTime(0.06, time);
+    gain.gain.exponentialRampToValueAtTime(0.001, time + dur);
+    src.connect(hp);
+    hp.connect(gain);
+    gain.connect(this.musicGain);
+    src.start(time);
   },
 
   // Dragon fire breath sound
