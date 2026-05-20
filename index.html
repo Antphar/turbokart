@@ -63,6 +63,13 @@
     animation: fadeIn 0.35s ease-out;
   }
   .overlay.hidden { display: none; }
+  #select-screen {
+    justify-content: flex-start;
+    overflow-y: auto;
+    gap: 8px;
+    padding-top: 18px;
+    padding-bottom: 18px;
+  }
 
   @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
 
@@ -200,17 +207,18 @@
     display: flex;
     flex-wrap: wrap;
     justify-content: center;
-    gap: 16px;
+    gap: 10px;
     max-width: 1050px;
     width: 100%;
-    margin: 15px 0 15px 0;
+    margin: 8px 0;
   }
   .char-card {
     background: rgba(8, 6, 26, 0.7);
     border: 2px solid rgba(255, 255, 255, 0.08);
     border-radius: 14px;
-    padding: 16px;
-    width: 225px;
+    padding: 12px;
+    width: min(200px, 30vw);
+    min-width: 168px;
     cursor: pointer;
     transition: transform 0.22s cubic-bezier(0.25, 0.8, 0.25, 1), border-color 0.22s ease, box-shadow 0.22s ease;
     display: flex;
@@ -279,8 +287,8 @@
   }
 
   .char-avatar {
-    width: 60px;
-    height: 60px;
+    width: 48px;
+    height: 48px;
     border-radius: 50%;
     display: flex;
     align-items: center;
@@ -349,7 +357,7 @@
     line-height: 1.35;
     text-align: left;
     width: 100%;
-    min-height: 54px;
+    min-height: 44px;
   }
   .char-passive strong {
     color: var(--char-color);
@@ -584,8 +592,8 @@
   /* ---- Map Selection Section ---- */
   .map-select-section {
     width: 100%;
-    max-width: 900px;
-    margin: 5px 0 15px 0;
+    max-width: 980px;
+    margin: 4px 0 10px 0;
     display: flex;
     flex-direction: column;
     align-items: center;
@@ -602,18 +610,20 @@
     text-shadow: 0 0 8px rgba(123, 117, 255, 0.5);
   }
   .map-select-container {
-    display: flex;
-    justify-content: center;
-    gap: 14px;
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(176px, 1fr));
+    gap: 10px;
     width: 100%;
-    flex-wrap: wrap;
+    max-height: 30vh;
+    overflow-y: auto;
+    padding: 2px 6px 8px;
   }
   .map-card {
     background: rgba(8, 6, 26, 0.6);
     border: 2px solid rgba(255, 255, 255, 0.08);
     border-radius: 12px;
-    padding: 10px 14px;
-    width: 240px;
+    padding: 9px 11px;
+    width: 100%;
     cursor: pointer;
     transition: all 0.22s cubic-bezier(0.25, 0.8, 0.25, 1);
     backdrop-filter: blur(8px);
@@ -660,6 +670,11 @@
     color: #a49fc4;
     line-height: 1.35;
     margin-bottom: 5px;
+    display: -webkit-box;
+    line-clamp: 2;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
   }
   .map-stat {
     font-size: 9px;
@@ -849,15 +864,18 @@
       <div class="map-select-container" id="maps-container"></div>
     </div>
 
-    <button class="btn" id="drive-btn" style="background: linear-gradient(135deg, #a4ff80, #7b75ff); box-shadow: 0 8px 24px rgba(123, 117, 255, 0.45); margin-top: 10px;">Drive!</button>
-    <div class="hint" id="lobby-hint">or press Space to lock (P1) · RShift to lock (P2)</div>
+    <div style="display:flex; gap:10px; flex-wrap:wrap; justify-content:center; margin-top: 6px;">
+      <button class="btn btn-alt" id="select-back-btn" type="button" style="background: rgba(255,255,255,0.06); color: #fff;">Main Menu</button>
+      <button class="btn" id="drive-btn" style="background: linear-gradient(135deg, #a4ff80, #7b75ff); box-shadow: 0 8px 24px rgba(123, 117, 255, 0.45);">Drive!</button>
+    </div>
+    <div class="hint" id="lobby-hint">or press Space to lock (P1) · RShift to lock (P2) · Esc for menu</div>
   </div>
 
   <!-- Pause screen -->
   <div id="pause-screen" class="overlay hidden">
     <div class="title-text" style="font-size: clamp(36px, 6vw, 70px);">Paused</div>
     <div class="subtitle">Press P to resume</div>
-    <div class="hint">Press R to restart · M to mute</div>
+    <div class="hint">Press R to restart · Esc for main menu · M to mute</div>
   </div>
 
   <!-- Finish screen -->
@@ -865,7 +883,7 @@
     <div class="title-text" id="finish-title">Finish!</div>
     <div class="results" id="finish-results"></div>
     <button class="btn" id="restart-btn">Race Again</button>
-    <div class="hint">or press R to restart</div>
+    <div class="hint">or press R to restart · Esc for main menu</div>
   </div>
 
 <script>
@@ -893,6 +911,7 @@ const finishTitle = document.getElementById("finish-title");
 const start1pBtn = document.getElementById("start-1p-btn");
 const start2pBtn = document.getElementById("start-2p-btn");
 const driveBtn = document.getElementById("drive-btn");
+const selectBackBtn = document.getElementById("select-back-btn");
 const restartBtn = document.getElementById("restart-btn");
 const settingsBtn = document.getElementById("settings-btn");
 const settingsBackBtn = document.getElementById("settings-back-btn");
@@ -945,6 +964,10 @@ const TUNING = {
   DRIFT_BOOST_T1: 24,
   DRIFT_BOOST_T2: 48,
   DRIFT_BOOST_T3: 72,
+  DRIFT_SPEED_RETENTION: 0.986,
+  DRIFT_TURN_MULT: 1.65,
+  DRIFT_CHARGE_RATE: 1.18,
+  DRIFT_SPARK_CHANCE: 0.52,
 
   // Physics
   BRAKE_FORCE: 0.18,
@@ -1767,6 +1790,12 @@ function hexToRgba(hex, alpha) {
 const Sound = {
   ctx: null,
   master: null,
+  compressor: null,
+  reverbSend: null,
+  reverbHighpass: null,
+  reverbLowpass: null,
+  reverb: null,
+  reverbReturn: null,
   muted: false,
 
   // Player 1 oscillators & gains
@@ -1791,10 +1820,52 @@ const Sound = {
       const C = window.AudioContext || window.webkitAudioContext;
       this.ctx = new C();
       this.master = this.ctx.createGain();
-      this.master.connect(this.ctx.destination);
+      this.compressor = this.ctx.createDynamicsCompressor();
+      this.compressor.threshold.setValueAtTime(-18, this.ctx.currentTime);
+      this.compressor.knee.setValueAtTime(18, this.ctx.currentTime);
+      this.compressor.ratio.setValueAtTime(4, this.ctx.currentTime);
+      this.compressor.attack.setValueAtTime(0.006, this.ctx.currentTime);
+      this.compressor.release.setValueAtTime(0.16, this.ctx.currentTime);
+
+      this.reverbSend = this.ctx.createGain();
+      this.reverbSend.gain.value = 0.055;
+      this.reverbHighpass = this.ctx.createBiquadFilter();
+      this.reverbHighpass.type = "highpass";
+      this.reverbHighpass.frequency.value = 420;
+      this.reverbLowpass = this.ctx.createBiquadFilter();
+      this.reverbLowpass.type = "lowpass";
+      this.reverbLowpass.frequency.value = 7200;
+      this.reverb = this.ctx.createConvolver();
+      this.reverb.buffer = this._buildReverbImpulse(1.35, 2.6);
+      this.reverbReturn = this.ctx.createGain();
+      this.reverbReturn.gain.value = 0.32;
+
+      this.master.connect(this.compressor);
+      this.master.connect(this.reverbSend);
+      this.reverbSend.connect(this.reverbHighpass);
+      this.reverbHighpass.connect(this.reverbLowpass);
+      this.reverbLowpass.connect(this.reverb);
+      this.reverb.connect(this.reverbReturn);
+      this.reverbReturn.connect(this.compressor);
+      this.compressor.connect(this.ctx.destination);
       this.setMuted(this.muted);
       this.startMusic();
     } catch (e) { /* audio unsupported */ }
+  },
+
+  _buildReverbImpulse(duration = 1.2, decay = 2.4) {
+    const rate = this.ctx.sampleRate;
+    const length = Math.max(1, Math.floor(rate * duration));
+    const impulse = this.ctx.createBuffer(2, length, rate);
+    for (let ch = 0; ch < impulse.numberOfChannels; ch++) {
+      const data = impulse.getChannelData(ch);
+      for (let i = 0; i < length; i++) {
+        const t = i / length;
+        const stereoOffset = ch === 0 ? 0.93 : 1.07;
+        data[i] = (Math.random() * 2 - 1) * Math.pow(1 - t, decay) * stereoOffset;
+      }
+    }
+    return impulse;
   },
   resume() {
     if (this.ctx && this.ctx.state === "suspended") this.ctx.resume();
@@ -2366,39 +2437,46 @@ const Sound = {
   isPlayingMusic: false,
   tracks: [
     {
-      name: "Mainframe Sunset",
+      name: "Systematic Review",
       tempo: 124,
-      icon: "🌅",
+      icon: "📋",
       color: "#57f2ff",
       style: "Synthwave Cruise"
     },
     {
-      name: "Neon Acid Overdrive",
+      name: "Adverse Event Report",
       tempo: 128,
-      icon: "⚡",
+      icon: "⚠️",
       color: "#ff4d6d",
       style: "Acid Sprint"
     },
     {
-      name: "Retro Chiptune Horizon",
+      name: "Protocol Amendment",
       tempo: 118,
-      icon: "👾",
+      icon: "📝",
       color: "#a4ff80",
       style: "Chiptune Flow"
     },
     {
-      name: "Midnight House Circuit",
+      name: "Phase III Approval",
       tempo: 128,
-      icon: "◆",
+      icon: "💊",
       color: "#b983ff",
       style: "Heavy Modern Banger"
     },
     {
-      name: "Velvet Haze Crawl",
+      name: "Post-Market Surveillance",
       tempo: 85,
-      icon: "🌀",
+      icon: "🔬",
       color: "#ff6b35",
       style: "Dirty Downtempo"
+    },
+    {
+      name: "Regulatory Submission",
+      tempo: 136,
+      icon: "📂",
+      color: "#39ff14",
+      style: "Minimal Techno"
     }
   ],
   trackIdx: null,
@@ -2436,7 +2514,7 @@ const Sound = {
     this.tempo = t.tempo;
 
     this.musicGain = this.ctx.createGain();
-    this.musicGain.gain.value = this.trackIdx === 3 ? 0.10 : this.trackIdx === 4 ? 0.11 : 0.08;
+    this.musicGain.gain.value = this.trackIdx === 5 ? 0.09 : this.trackIdx === 3 ? 0.10 : this.trackIdx === 4 ? 0.11 : 0.08;
     this.musicGain.connect(this.master);
 
     this.nextNoteTime = this.ctx.currentTime + 0.1;
@@ -2575,19 +2653,21 @@ const Sound = {
     // 1. Play bass groove (always plays, but quieter when losing)
     const bassFreq = this.getBassFreq(step);
     if (bassFreq) {
-      this.playBassNote(bassFreq, time, stepDur * (track === 3 ? 1.35 : track === 4 ? 2.8 : 1.05), step);
+      this.playBassNote(bassFreq, time, stepDur * (track === 5 ? 0.85 : track === 3 ? 1.35 : track === 4 ? 2.8 : 1.05), step);
     }
 
     // 2. Melody
     const melFreq = this.getMelodyNote(step);
     if (melFreq) {
-      this.playMelodyNote(melFreq, time, stepDur * (track === 3 ? 2.6 : track === 4 ? 4.5 : 1.8));
+      this.playMelodyNote(melFreq, time, stepDur * (track === 5 ? 3.2 : track === 3 ? 2.6 : track === 4 ? 4.5 : 1.8));
     }
 
     // 2b. Chords/arps/pads
     if (playChords) {
       if (track === 4 && bar < 6 && (stepInBar === 0)) {
         this.playDowntempoPad(this.getChordFreqs(track, bar), time, stepDur * 14);
+      } else if (track === 5 && bar >= 4 && stepInBar === 0) {
+        this.playDowntempoPad(this.getChordFreqs(track, bar), time, stepDur * 12);
       } else if (track === 3 && bar < 6 && (stepInBar === 2 || stepInBar === 6 || stepInBar === 10 || stepInBar === 14)) {
         this.playHouseChord(this.getChordFreqs(track, bar), time, stepDur * 2.8);
       } else if (track !== 3 && track !== 4 && bar < 6 && ((track === 1 && (stepInBar === 3 || stepInBar === 7 || stepInBar === 11 || stepInBar === 15)) || (track !== 1 && stepInBar % 4 === 1))) {
@@ -2619,6 +2699,24 @@ const Sound = {
       }
       if (bar === 7 && stepInBar >= 8) {
         this.playRetroSnare(time, (stepInBar - 7) / 6.0);
+      }
+    } else if (track === 5) {
+      // Minimal techno: relentless four-on-the-floor, sparse hats, builds over bars
+      if (stepInBar === 0 || stepInBar === 4 || stepInBar === 8 || stepInBar === 12) {
+        this.playRetroKick(time, true);
+      }
+      if (bar >= 2 && (stepInBar === 2 || stepInBar === 6 || stepInBar === 10 || stepInBar === 14)) {
+        this.playRetroHiHat(time, false);
+      }
+      if (bar >= 4 && (stepInBar === 4 || stepInBar === 12)) {
+        this.playRetroSnare(time, 0.45);
+      }
+      if (bar >= 6 && stepInBar % 2 === 1) {
+        this.playRetroHiHat(time, true);
+      }
+      if (bar === 7 && stepInBar >= 12) {
+        this.playRetroSnare(time, (stepInBar - 11) / 4.0);
+        this.playClap(time, (stepInBar - 11) / 5.0);
       }
     } else if (track === 3) {
       if (bar !== 6) {
@@ -2669,6 +2767,33 @@ const Sound = {
       const snareVolumeScale = (stepInBar - 11) / 4.0;
       this.playRetroSnare(time, snareVolumeScale);
     }
+
+    // Transition riser at end of loop
+    if (bar === 7 && stepInBar >= 12) {
+      const progress = (stepInBar - 12) / 4.0;
+      if (this.ctx && this.musicGain) {
+        const dur = stepDur * (4 - (stepInBar - 12));
+        const bufLen = Math.max(1, Math.floor(this.ctx.sampleRate * dur));
+        const buf = this.ctx.createBuffer(1, bufLen, this.ctx.sampleRate);
+        const d = buf.getChannelData(0);
+        for (let i = 0; i < bufLen; i++) d[i] = (Math.random() * 2 - 1) * (i / bufLen);
+        const src = this.ctx.createBufferSource();
+        src.buffer = buf;
+        const hp = this.ctx.createBiquadFilter();
+        hp.type = "highpass";
+        hp.frequency.setValueAtTime(800 + progress * 4000, time);
+        hp.frequency.linearRampToValueAtTime(6000, time + dur);
+        hp.Q.setValueAtTime(3.5, time);
+        const g = this.ctx.createGain();
+        g.gain.setValueAtTime(0.001, time);
+        g.gain.linearRampToValueAtTime(0.035 * progress, time + dur * 0.7);
+        g.gain.exponentialRampToValueAtTime(0.001, time + dur);
+        src.connect(hp);
+        hp.connect(g);
+        g.connect(this.musicGain);
+        src.start(time);
+      }
+    }
   },
 
   getBassFreq(step) {
@@ -2679,24 +2804,24 @@ const Sound = {
     if (track === 0) {
       const roots = [82.41, 65.41, 73.42, 61.74, 82.41, 65.41, 55.00, 61.74];
       const patterns = [
-        [1, null, null, 1.5, null, 2, null, null, 1, null, 1.5, null, 2, null, null, 1.5],
-        [1, null, 1.5, null, null, 2, null, 1.5, 1, null, null, 1.5, null, 2, null, null],
-        [1, null, null, 1.5, 2, null, 1.5, null, 1, null, 2, null, 1.5, null, null, 2],
-        [1, null, 1.5, null, 2, null, null, 1.5, 1, null, 1.25, null, 1.5, null, 2, null]
+        [1, null, null, 1.189, null, 1.498, null, null, 1, null, 1.189, null, 1.498, null, null, 1.782],
+        [1, null, 1.189, null, null, 1.498, null, 1.782, 1, null, null, 1.189, null, 1.498, null, null],
+        [1, null, null, 1.189, 1.498, null, 1.782, null, 1, null, 1.498, null, 1.189, null, null, 2],
+        [1, null, 1.189, null, 1.498, null, null, 1.782, 1, null, 1.189, null, 1.498, null, 2, null]
       ];
-      const ratio = (bar >= 6 ? [1, null, null, null, 1.5, null, null, null, 2, null, 1.5, null, 1, null, null, null] : patterns[bar % patterns.length])[stepInBar];
+      const ratio = (bar >= 6 ? [1, null, null, null, 1.189, null, null, null, 1.498, null, 1.782, null, 1, null, null, null] : patterns[bar % patterns.length])[stepInBar];
       return ratio ? roots[bar] * ratio : null;
     }
 
     if (track === 1) {
       const roots = [55.00, 43.65, 49.00, 41.20, 55.00, 43.65, 36.71, 41.20];
       const patterns = [
-        [1, null, 2, null, 1.5, null, null, 2, 1, null, 1.5, null, 2, null, 1, null],
-        [1, 2, null, 1.5, null, 2, null, null, 1, null, 1.5, 2, null, null, 1.5, null],
-        [1, null, 1.5, 2, null, null, 1, null, 1.5, null, 2, null, 1, null, 1.5, 2],
-        [1, null, 2, null, 1.5, null, 1, null, 2, null, 1.5, null, 1, null, 2, null]
+        [1, null, 1.189, null, 1.498, null, null, 1.782, 1, null, 1.189, null, 1.498, null, 1, null],
+        [1, 1.498, null, 1.189, null, 1.782, null, null, 1, null, 1.189, 1.498, null, null, 1.782, null],
+        [1, null, 1.189, 1.498, null, null, 1, null, 1.189, null, 1.782, null, 1, null, 1.189, 1.498],
+        [1, null, 1.498, null, 1.189, null, 1, null, 1.782, null, 1.189, null, 1, null, 1.498, null]
       ];
-      const ratio = (bar >= 6 ? [1, null, null, 1.5, null, null, 2, null, 1, null, null, 1.5, 2, null, null, null] : patterns[bar % patterns.length])[stepInBar];
+      const ratio = (bar >= 6 ? [1, null, null, 1.189, null, null, 1.498, null, 1, null, null, 1.782, 1.498, null, null, null] : patterns[bar % patterns.length])[stepInBar];
       return ratio ? roots[bar] * ratio : null;
     }
 
@@ -2733,6 +2858,19 @@ const Sound = {
         [1, null, null, null, 1.5, null, null, 2, null, null, null, null, 1, null, null, null]
       ];
       const ratio = (bar >= 6 ? [1, null, null, null, null, null, null, null, 1.5, null, null, null, null, null, null, null] : patterns[bar % patterns.length])[stepInBar];
+      return ratio ? roots[bar] * ratio : null;
+    }
+
+    if (track === 5) {
+      // Regulatory Submission: F# minor, hypnotic single-note pulse
+      const roots = [46.25, 46.25, 43.65, 46.25, 46.25, 43.65, 41.20, 43.65];
+      const patterns = [
+        [1, null, 1, null, 1, null, 1.189, null, 1, null, 1, null, 1.498, null, 1, null],
+        [1, null, 1, null, 1.189, null, 1, null, 1, null, 1.498, null, 1, null, 1, null],
+        [1, null, 1, 1.189, null, null, 1, null, 1.498, null, 1, null, 1, 1.189, null, null],
+        [1, null, 1, null, 1, null, 1, null, 1, null, 1, null, 1, null, 1.498, null]
+      ];
+      const ratio = (bar >= 6 ? [1, null, 1, null, null, null, 1, null, null, null, 1.189, null, null, null, null, null] : patterns[bar % patterns.length])[stepInBar];
       return ratio ? roots[bar] * ratio : null;
     }
 
@@ -2830,13 +2968,27 @@ const Sound = {
       }
       return this.getPatternNote(step, [
         [0, 329.63], [7, 293.66], [14, 349.23],
-        [22, 311.13], [30, 293.66],
+        [22, 329.63], [30, 293.66],
         [36, 329.63], [44, 369.99], [50, 349.23],
         [58, 293.66],
         [66, 329.63], [74, 261.63], [80, 293.66],
-        [88, 349.23], [95, 311.13],
+        [88, 349.23], [95, 329.63],
         [100, 329.63], [110, 293.66], [118, 261.63],
         [124, 293.66]
+      ]);
+    }
+
+    if (track === 5) {
+      // Sparse, haunting melody in F# minor — only appears bars 4-7
+      if (bar < 4) return null;
+      if (bar === 6) {
+        return [369.99, null, null, null, null, null, 329.63, null, null, null, null, null, 293.66, null, null, null][stepInBar];
+      } else if (bar === 7) {
+        return [349.23, null, null, null, 329.63, null, null, null, 369.99, null, null, null, null, null, null, null][stepInBar];
+      }
+      return this.getPatternNote(step, [
+        [64, 369.99], [72, 329.63], [80, 293.66],
+        [88, 369.99], [95, 329.63]
       ]);
     }
 
@@ -2982,6 +3134,13 @@ const Sound = {
       if (bar === 1 || bar === 5) return [220.00, 261.63, 329.63, 392.00]; // Am9
       if (bar === 2 || bar === 6) return [146.83, 174.61, 220.00, 261.63]; // Dm7
       if (bar === 3 || bar === 7) return [196.00, 246.94, 293.66, 369.99]; // G7
+    }
+    if (track === 5) {
+      // F#m, Dmaj7, A, E — dark minimal voicings
+      if (bar === 0 || bar === 4) return [184.99, 220.00, 277.18]; // F#m
+      if (bar === 1 || bar === 5) return [146.83, 185.00, 220.00, 277.18]; // Dmaj7
+      if (bar === 2 || bar === 6) return [220.00, 277.18, 329.63]; // A
+      if (bar === 3 || bar === 7) return [164.81, 207.65, 246.94]; // E
     }
     return [523.25, 659.25, 783.99]; // Default C chord
   },
@@ -3140,18 +3299,19 @@ const Sound = {
     const track = this.trackIdx || 0;
     const isModern = track === 3;
     const isDowntempo = track === 4;
+    const isMinimal = track === 5;
     const osc = this.ctx.createOscillator();
     const gain = this.ctx.createGain();
 
-    osc.type = isDowntempo ? "sawtooth" : track === 1 ? "sawtooth" : isModern ? "sawtooth" : "triangle";
+    osc.type = isMinimal ? "sine" : isDowntempo ? "sawtooth" : track === 1 ? "sawtooth" : isModern ? "sawtooth" : "triangle";
     osc.frequency.setValueAtTime(freq, time);
     if (isModern) osc.detune.setValueAtTime(6, time);
     if (isDowntempo) osc.detune.setValueAtTime(4, time);
 
     const vibrato = this.ctx.createOscillator();
     const vibratoGain = this.ctx.createGain();
-    vibrato.frequency.value = isDowntempo ? 2.8 : isModern ? 3.5 : 5.4;
-    vibratoGain.gain.value = isDowntempo ? 6.0 : isModern ? 3.5 : track === 1 ? 2.8 : 2.2;
+    vibrato.frequency.value = isMinimal ? 2.0 : isDowntempo ? 2.8 : isModern ? 3.5 : 5.4;
+    vibratoGain.gain.value = isMinimal ? 1.8 : isDowntempo ? 6.0 : isModern ? 3.5 : track === 1 ? 2.8 : 2.2;
 
     vibrato.connect(vibratoGain);
     vibratoGain.connect(osc.frequency);
@@ -3650,7 +3810,7 @@ const Sound = {
    ============================================================ */
 const keysP1 = { up: false, down: false, left: false, right: false, drift: false, driftPressed: false, item: false, itemPressed: false, leftPressed: false, rightPressed: false };
 const keysP2 = { up: false, down: false, left: false, right: false, drift: false, driftPressed: false, item: false, itemPressed: false, leftPressed: false, rightPressed: false };
-const keysGlobal = { pause: false, pausePressed: false, restart: false, restartPressed: false, mute: false, mutePressed: false, enter: false, enterPressed: false };
+const keysGlobal = { pause: false, pausePressed: false, restart: false, restartPressed: false, mute: false, mutePressed: false, enter: false, enterPressed: false, back: false, backPressed: false };
 
 window.addEventListener("keydown", (e) => {
   const code = e.code;
@@ -3684,6 +3844,10 @@ window.addEventListener("keydown", (e) => {
   if (key === "Enter") {
     keysGlobal.enter = true;
     keysGlobal.enterPressed = true;
+  }
+  if (key === "Escape" || code === "Escape") {
+    keysGlobal.back = true;
+    keysGlobal.backPressed = true;
   }
 
   // Player 1 mappings (WASD + Space + LeftShift)
@@ -3766,6 +3930,7 @@ window.addEventListener("keyup", (e) => {
   const key = e.key;
 
   if (key === "Enter") keysGlobal.enter = false;
+  if (key === "Escape" || code === "Escape") keysGlobal.back = false;
 
   // Player 1 keyups
   if (code === "KeyW") keysP1.up = false;
@@ -5768,6 +5933,7 @@ class Kart {
     const drifting = input.drift && Math.abs(vF) > 1.5;
     if (drifting) {
       this.gripRecovery = 0;
+      vF *= Math.pow(TUNING.DRIFT_SPEED_RETENTION, dt);
     } else if (this.gripRecovery < 1.0) {
       this.gripRecovery = Math.min(1.0, this.gripRecovery + 0.08 * dt);
     }
@@ -5779,7 +5945,7 @@ class Kart {
     if (steerInput !== 0) {
       let speedFactor = clamp(Math.abs(vF) / 2.0, 0, 1);
       let turn = this.turnSpeed * speedFactor;
-      if (drifting) turn *= 1.45;
+      if (drifting) turn *= TUNING.DRIFT_TURN_MULT;
       if (this.handlingTimer > 0) turn *= 1.25;
       if (this.doubleBlindTimer > 0) turn *= -0.85;
       // Reverse — steering inverts feel
@@ -5792,7 +5958,7 @@ class Kart {
       if (this.driftDir === 0) this.driftDir = steerInput;
       if (this.driftDir === steerInput) {
         // Artur trailing desperation mechanic: 1.8x charging rate!
-        let chargeAmt = dt;
+        let chargeAmt = dt * TUNING.DRIFT_CHARGE_RATE;
         if (this.charId === "artur") {
           const ranking = rankAll();
           const rank = ranking.indexOf(this) + 1;
@@ -5804,7 +5970,7 @@ class Kart {
       }
 
       // Drift sparks generation from rear wheels
-      if (Math.random() < 0.35 * dt) {
+      if (Math.random() < TUNING.DRIFT_SPARK_CHANCE * dt) {
         let sparkColor = null;
         if (this.driftCharge >= TUNING.DRIFT_TIER3) {
           sparkColor = pick(["#ff4d6d", "#7b75ff", "#ff00ff"]); // Purple/Pink (Tier 3)
@@ -6339,8 +6505,8 @@ class AIKart extends Kart {
 
     // Lateral offset along the segment normal for varied racing line
     const seg = track.segments[(this.aiTargetIdx - 1 + track.n) % track.n];
-    const aimX = lerp(target.x, next.x, 0.30) + seg.nx * (this.lateralOffset * (seg.halfW * 0.55));
-    const aimY = lerp(target.y, next.y, 0.30) + seg.ny * (this.lateralOffset * (seg.halfW * 0.55));
+    let aimX = lerp(target.x, next.x, 0.30) + seg.nx * (this.lateralOffset * (seg.halfW * 0.55));
+    let aimY = lerp(target.y, next.y, 0.30) + seg.ny * (this.lateralOffset * (seg.halfW * 0.55));
 
     // Curvature lookahead corners
     const currentWP = track.waypoints[(this.aiTargetIdx - 1 + track.n) % track.n];
@@ -6365,6 +6531,26 @@ class AIKart extends Kart {
     const lookDist = 160;
     const fx = Math.cos(this.heading), fy = Math.sin(this.heading);
     const lx = -fy, ly = fx;
+
+    let bestBoost = null;
+    let bestBoostScore = Infinity;
+    for (const pad of game.track.boostPads || []) {
+      const dx = pad.x - this.x;
+      const dy = pad.y - this.y;
+      const localForward = dx * fx + dy * fy;
+      const localLateral = Math.abs(dx * lx + dy * ly);
+      if (localForward > 35 && localForward < 520 && localLateral < Math.max(130, seg.halfW * 1.25)) {
+        const score = localForward + localLateral * 2.2;
+        if (score < bestBoostScore) {
+          bestBoostScore = score;
+          bestBoost = pad;
+        }
+      }
+    }
+    if (bestBoost && curvature < 0.75) {
+      aimX = lerp(aimX, bestBoost.x, 0.72);
+      aimY = lerp(aimY, bestBoost.y, 0.72);
+    }
 
     const obstacles = [
       ...(game.hazards || []).map(h => ({ x: h.x, y: h.y, r: h.r || 15, isHazard: true })),
@@ -7678,6 +7864,12 @@ function update(dt, time) {
   if (consumePressed("mute")) {
     Sound.setMuted(!Sound.muted);
   }
+  if (consumePressed("back")) {
+    if (titleScreen.classList.contains("hidden")) {
+      showMainMenu();
+      return;
+    }
+  }
 
   // Handle Character Selection State Input
   if (game.state === STATE.SELECT) {
@@ -8798,6 +8990,11 @@ function drawHUD(time) {
     else if (game.player.driftCharge >= TUNING.DRIFT_TIER2) col = "#fd9927"; // Orange (Tier 2)
     ctx.fillStyle = col;
     ctx.fillRect(x, y, w * charge, h);
+    ctx.strokeStyle = col;
+    ctx.strokeRect(x - 1, y - 1, w + 2, h + 2);
+    ctx.font = "bold 10px sans-serif";
+    ctx.textAlign = "center";
+    ctx.fillText(game.player.driftCharge >= TUNING.DRIFT_TIER3 ? "ULTRA TURBO READY" : game.player.driftCharge >= TUNING.DRIFT_TIER2 ? "SUPER TURBO" : "MINI TURBO", x + w / 2, y - 7);
   }
 
   // Regulaido Autopilot Active Watermark Panel (top-center, beautifully glassmorphic)
@@ -9633,6 +9830,18 @@ function hideAll() {
   p2pScreen.classList.add("hidden");
 }
 
+function showMainMenu() {
+  Sound.stopAllEngines();
+  Sound.stopAllDriftSqueals();
+  Sound.stopAllRumbles();
+  if (game.p2pMode) handleP2pDisconnect({ silent: true });
+  game.state = STATE.TITLE;
+  game.p1Locked = false;
+  game.p2Locked = false;
+  hideAll();
+  titleScreen.classList.remove("hidden");
+}
+
 function renderMusicSettings() {
   if (!musicSettingsContainer) return;
   musicSettingsContainer.innerHTML = "";
@@ -9695,6 +9904,10 @@ settingsBackBtn.addEventListener("click", () => {
   Sound.ensure(); Sound.resume();
   hideAll();
   titleScreen.classList.remove("hidden");
+});
+selectBackBtn.addEventListener("click", () => {
+  Sound.ensure(); Sound.resume();
+  showMainMenu();
 });
 
 crtToggleBtn.addEventListener("click", () => {
@@ -10175,7 +10388,7 @@ function sendGuestSync() {
   sendP2pMessage(sync);
 }
 
-function handleP2pDisconnect() {
+function handleP2pDisconnect({ silent = false } = {}) {
   for (const conn of p2pConnections.values()) {
     try { conn.close(); } catch(e) {}
   }
@@ -10217,7 +10430,7 @@ function handleP2pDisconnect() {
     game.state = STATE.TITLE;
     hideAll();
     titleScreen.classList.remove("hidden");
-    alert("Peer disconnected! Returning to menu.");
+    if (!silent) alert("Peer disconnected! Returning to menu.");
   }
 }
 
