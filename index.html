@@ -6549,6 +6549,31 @@ function areAllP2pPlayersReady() {
   return players.length >= 2 && players.every(p => p.locked);
 }
 
+function updateP2pStartButton() {
+  if (!driveBtn || !game.p2pMode || game.state !== STATE.SELECT) return;
+  if (game.p2pRole !== "host") {
+    driveBtn.style.display = "none";
+    return;
+  }
+  driveBtn.style.display = "block";
+  driveBtn.textContent = areAllP2pPlayersReady() ? "Start Online Race" : `Waiting (${getP2pReadyCount()}/${(game.p2pPlayers || []).length})`;
+  driveBtn.disabled = !areAllP2pPlayersReady();
+}
+
+function startP2pRaceFromSelection() {
+  if (!game.p2pMode || game.p2pRole !== "host" || !areAllP2pPlayersReady()) return;
+  hideAll();
+  buildRace();
+  startCountdown();
+  Sound.startEngine(1);
+  sendP2pMessage({
+    type: "start_race",
+    players: game.p2pPlayers,
+    mapIdx: game.selectedMapIdx,
+    trackIdx: Sound.trackIdx
+  });
+}
+
 function syncP2pSelectionFromRoster({ preserveLocal = false } = {}) {
   if (!game.p2pMode || !game.p2pPlayers || !game.p2pPlayers.length) return;
 
@@ -6569,20 +6594,7 @@ function syncP2pSelectionFromRoster({ preserveLocal = false } = {}) {
 
 function checkMultiplayerSelectFinish() {
   if (game.p2pMode) {
-    if (game.p2pRole !== "host" || !areAllP2pPlayersReady()) return;
-    setTimeout(() => {
-      if (!areAllP2pPlayersReady()) return;
-      hideAll();
-      buildRace();
-      startCountdown();
-      Sound.startEngine(1);
-      sendP2pMessage({
-        type: "start_race",
-        players: game.p2pPlayers,
-        mapIdx: game.selectedMapIdx,
-        trackIdx: Sound.trackIdx
-      });
-    }, 500);
+    updateP2pStartButton();
     return;
   }
 
@@ -6726,7 +6738,9 @@ function showSelectScreen() {
     document.getElementById("lobby-hint").innerText = game.p2pMode
       ? (game.p2pRole === "host" ? "Host picks track · Everyone picks coder · Space/Enter to ready" : "Host picks track · Pick coder · Space/Enter to ready")
       : "Space to lock P1 · Right Shift to lock P2";
-    driveBtn.style.display = "none"; // Hide standard drive button, auto-launch on lock
+    driveBtn.disabled = false;
+    driveBtn.textContent = game.p2pMode && game.p2pRole === "host" ? "Waiting For Players" : "Drive!";
+    driveBtn.style.display = game.p2pMode && game.p2pRole === "host" ? "block" : "none";
   } else {
     game.selectedCharIdx2 = undefined;
     game.p1Locked = false;
@@ -6737,12 +6751,15 @@ function showSelectScreen() {
     document.getElementById("status-p2").style.display = "none";
     document.getElementById("lobby-subtitle").innerText = "Lobby: Choose Your Coder";
     document.getElementById("lobby-hint").innerText = "Press Space or Enter to Drive!";
+    driveBtn.disabled = false;
+    driveBtn.textContent = "Drive!";
     driveBtn.style.display = "block";
   }
 
   renderSelectScreen();
   updateSelectionHighlight();
   renderMapSelect();
+  updateP2pStartButton();
 }
 
 function renderMapSelect() {
@@ -6889,6 +6906,11 @@ function removeP2pGuestByConn(conn) {
   if (!removedId) return;
   p2pConnections.delete(removedId);
   game.p2pPlayers = game.p2pPlayers.filter(p => p.id !== removedId);
+  if (game.state === STATE.SELECT) {
+    syncP2pSelectionFromRoster({ preserveLocal: true });
+    updateSelectionHighlight();
+    updateP2pStartButton();
+  }
   renderP2pLobby();
   broadcastP2pLobby();
 }
@@ -7490,12 +7512,13 @@ function update(dt, time) {
   if (game.state === STATE.SELECT) {
     if (game.p2pMode) {
       let changed = false;
-      if (consumePressed("left") || consumePressedP1("left")) {
+      const localLocked = !!(getLocalP2pPlayer() && getLocalP2pPlayer().locked);
+      if (!localLocked && (consumePressed("left") || consumePressedP1("left"))) {
         game.selectedCharIdx = (game.selectedCharIdx - 1 + CHARACTERS.length) % CHARACTERS.length;
         setLocalP2pCharacterIdx(game.selectedCharIdx);
         changed = true;
       }
-      if (consumePressed("right") || consumePressedP1("right")) {
+      if (!localLocked && (consumePressed("right") || consumePressedP1("right"))) {
         game.selectedCharIdx = (game.selectedCharIdx + 1) % CHARACTERS.length;
         setLocalP2pCharacterIdx(game.selectedCharIdx);
         changed = true;
@@ -7514,6 +7537,7 @@ function update(dt, time) {
         const nextLocked = !(getLocalP2pPlayer() && getLocalP2pPlayer().locked);
         setLocalP2pLocked(nextLocked);
         updateSelectionHighlight();
+        updateP2pStartButton();
         renderP2pLobby();
         Sound.tone(nextLocked ? 660 : 330, 0.12, "square", 0.14);
         sendP2pMessage({
@@ -9435,6 +9459,10 @@ start2pBtn.addEventListener("click", () => {
 });
 driveBtn.addEventListener("click", () => {
   Sound.ensure(); Sound.resume();
+  if (game.p2pMode && game.p2pRole === "host" && game.state === STATE.SELECT) {
+    startP2pRaceFromSelection();
+    return;
+  }
   hideAll();
   buildRace();
   startCountdown();
@@ -9496,7 +9524,8 @@ p2pHostBtn.addEventListener("click", () => {
           } else if (game.state === STATE.SELECT) {
             syncP2pSelectionFromRoster({ preserveLocal: true });
             updateSelectionHighlight();
-          renderP2pLobby();
+            updateP2pStartButton();
+            renderP2pLobby();
           }
         });
         conn.on("data", (data) => {
@@ -9959,6 +9988,7 @@ function handleP2pData(data, sourceConn = null) {
     renderP2pLobby();
     if (game.state === STATE.SELECT) {
       updateSelectionHighlight();
+      updateP2pStartButton();
       renderMapSelect();
     }
   }
@@ -9975,6 +10005,7 @@ function handleP2pData(data, sourceConn = null) {
     if (game.state === STATE.SELECT) {
       syncP2pSelectionFromRoster({ preserveLocal: true });
       updateSelectionHighlight();
+      updateP2pStartButton();
       checkMultiplayerSelectFinish();
     }
   }
@@ -9989,6 +10020,7 @@ function handleP2pData(data, sourceConn = null) {
     }
     syncP2pSelectionFromRoster({ preserveLocal: true });
     updateSelectionHighlight();
+    updateP2pStartButton();
     renderP2pLobby();
     if (game.p2pRole === "host") {
       broadcastP2pMessage({ ...data, playerId }, sourceConn);
