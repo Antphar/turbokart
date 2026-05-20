@@ -10564,7 +10564,7 @@ function rebuild3DTrack() {
       }
       // The pad's local +Z should point along bp.ang (travel direction)
       padGroup.position.set(bp.x, 1.5, bp.y);
-      padGroup.rotation.y = -bp.ang;
+      padGroup.rotation.y = -bp.ang + Math.PI / 2;
       padGroup._boostPadRef = bp;
       padGroup._padMat = padMat;
       group.add(padGroup);
