@@ -11606,34 +11606,43 @@ function draw3D(time) {
     const fullH = Math.floor(VIEW_H * dpr);
     const halfW = Math.floor(fullW / 2);
 
+    // Need autoClear off so the second render doesn't erase the first viewport
+    renderer.autoClear = false;
     renderer.setScissorTest(true);
 
-    // Left viewport - Player 1
-    renderer.setViewport(0, 0, halfW, fullH);
-    renderer.setScissor(0, 0, halfW, fullH);
-    THREE_STATE.camera.aspect = (VIEW_W / 2) / VIEW_H;
-    setCameraForKart(game.player, time);
-    renderer.render(THREE_STATE.scene, THREE_STATE.camera);
-
-    // Right viewport - Player 2
-    // Save/restore cam smooth for P2
-    const p1Cam = { ...THREE_STATE.camSmooth };
+    // Initialize P2 cam smooth if needed
     if (!THREE_STATE._camSmoothP2) {
       THREE_STATE._camSmoothP2 = { x: game.player2.x, y: 70, z: game.player2.y, lx: game.player2.x, ly: 12, lz: game.player2.y };
     }
-    THREE_STATE.camSmooth = THREE_STATE._camSmoothP2;
 
+    // ---- Left viewport: Player 1 ----
+    renderer.setViewport(0, 0, halfW, fullH);
+    renderer.setScissor(0, 0, halfW, fullH);
+    renderer.clear();
+    THREE_STATE.camera.aspect = (VIEW_W / 2) / VIEW_H;
+    THREE_STATE.camera.updateProjectionMatrix();
+    setCameraForKart(game.player, time);
+    renderer.render(THREE_STATE.scene, THREE_STATE.camera);
+
+    // Save P1 cam state, load P2 cam state
+    const savedP1 = { ...THREE_STATE.camSmooth };
+    THREE_STATE.camSmooth = { ...THREE_STATE._camSmoothP2 };
+
+    // ---- Right viewport: Player 2 ----
     renderer.setViewport(halfW + 2, 0, halfW - 2, fullH);
     renderer.setScissor(halfW + 2, 0, halfW - 2, fullH);
     setCameraForKart(game.player2, time);
     renderer.render(THREE_STATE.scene, THREE_STATE.camera);
 
-    THREE_STATE._camSmoothP2 = THREE_STATE.camSmooth;
-    THREE_STATE.camSmooth = p1Cam;
+    // Save P2 cam state, restore P1 cam state
+    THREE_STATE._camSmoothP2 = { ...THREE_STATE.camSmooth };
+    THREE_STATE.camSmooth = savedP1;
 
     renderer.setScissorTest(false);
+    renderer.autoClear = true;
     renderer.setViewport(0, 0, fullW, fullH);
     THREE_STATE.camera.aspect = VIEW_W / VIEW_H;
+    THREE_STATE.camera.updateProjectionMatrix();
   } else {
     renderer.render(THREE_STATE.scene, THREE_STATE.camera);
   }
