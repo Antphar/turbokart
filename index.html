@@ -10086,7 +10086,7 @@ function loadThreeJS(callback) {
   if (THREE_STATE.loading) return;
   THREE_STATE.loading = true;
   const script = document.createElement("script");
-  script.src = "https://cdnjs.cloudflare.com/ajax/libs/three.js/r170/three.min.js";
+  script.src = "three.min.js";
   script.onload = () => { THREE_STATE.loaded = true; callback(); };
   script.onerror = () => { alert("Could not load Three.js"); THREE_STATE.loading = false; };
   document.head.appendChild(script);
@@ -12103,7 +12103,7 @@ function loadPeerJS(callback) {
     return;
   }
   const script = document.createElement("script");
-  script.src = "https://cdn.jsdelivr.net/npm/peerjs@1.5.5/dist/peerjs.min.js";
+  script.src = "peerjs.min.js";
   script.onload = () => {
     callback();
   };
