@@ -10171,13 +10171,22 @@ function init3DScene() {
   grid.material.transparent = true;
   THREE_STATE.scene.add(grid);
 
-  // Sky dome
-  const skyGeo = new T.SphereGeometry(5000, 16, 8);
-  const skyMat = new T.MeshBasicMaterial({
-    color: 0x0a0820,
-    side: T.BackSide,
-  });
+  // Sky dome with starfield
+  const skyGeo = new T.SphereGeometry(5000, 32, 16);
+  const skyMat = new T.MeshBasicMaterial({ color: 0x050412, side: T.BackSide });
   THREE_STATE.scene.add(new T.Mesh(skyGeo, skyMat));
+  // Stars as points
+  const starVerts = [];
+  for (let i = 0; i < 1200; i++) {
+    const theta = Math.random() * Math.PI * 2;
+    const phi = Math.acos(2 * Math.random() - 1);
+    const r = 4500 + Math.random() * 400;
+    starVerts.push(r * Math.sin(phi) * Math.cos(theta), r * Math.cos(phi), r * Math.sin(phi) * Math.sin(theta));
+  }
+  const starGeo = new T.BufferGeometry();
+  starGeo.setAttribute("position", new T.Float32BufferAttribute(starVerts, 3));
+  const starMat = new T.PointsMaterial({ color: 0xffffff, size: 3, sizeAttenuation: false, transparent: true, opacity: 0.6 });
+  THREE_STATE.scene.add(new T.Points(starGeo, starMat));
 
   // HUD overlay canvas
   if (hudCanvas) {
@@ -10350,20 +10359,70 @@ function rebuild3DTrack() {
     group.add(rumble);
   }
 
-  // Glowing edge lines
+  // 3D barrier walls along track edges
+  const barrierH = 14;
+  const barrierOffset = 6;
   for (let side = -1; side <= 1; side += 2) {
-    const lineVerts = [];
+    const wallVerts = [];
+    const wallColors = [];
+    for (let i = 0; i < segmentCount; i++) {
+      const e0 = edges[i];
+      const e1 = edges[(i + 1) % edges.length];
+      if (!e0 || !e1) continue;
+      const c0 = e0.center, c1 = e1.center;
+      const s0 = side === 1 ? e0.left : e0.right;
+      const s1 = side === 1 ? e1.left : e1.right;
+      const dx0 = s0.x - c0.x, dy0 = s0.y - c0.y;
+      const dl0 = Math.hypot(dx0, dy0) || 1;
+      const dx1 = s1.x - c1.x, dy1 = s1.y - c1.y;
+      const dl1 = Math.hypot(dx1, dy1) || 1;
+      const b0x = s0.x + (dx0 / dl0) * barrierOffset;
+      const b0z = s0.y + (dy0 / dl0) * barrierOffset;
+      const b1x = s1.x + (dx1 / dl1) * barrierOffset;
+      const b1z = s1.y + (dy1 / dl1) * barrierOffset;
+      // Front face of barrier (two triangles)
+      wallVerts.push(b0x, 0, b0z, b1x, 0, b1z, b0x, barrierH, b0z);
+      wallVerts.push(b1x, 0, b1z, b1x, barrierH, b1z, b0x, barrierH, b0z);
+      // Alternating neon color stripes
+      const isEven = i % 4 < 2;
+      const cr = side === 1 ? (isEven ? [0.48, 0.46, 1.0] : [0.15, 0.12, 0.35]) : (isEven ? [0.99, 0.3, 0.42] : [0.15, 0.12, 0.35]);
+      for (let v = 0; v < 6; v++) wallColors.push(cr[0], cr[1], cr[2]);
+    }
+    if (wallVerts.length > 0) {
+      const wGeo = new T.BufferGeometry();
+      wGeo.setAttribute("position", new T.Float32BufferAttribute(wallVerts, 3));
+      wGeo.setAttribute("color", new T.Float32BufferAttribute(wallColors, 3));
+      wGeo.computeVertexNormals();
+      const wMat = new T.MeshStandardMaterial({
+        vertexColors: true,
+        roughness: 0.5,
+        metalness: 0.6,
+        emissive: side === 1 ? 0x1a1840 : 0x1a0815,
+        emissiveIntensity: 0.4,
+        transparent: true,
+        opacity: 0.82,
+      });
+      const wall = new T.Mesh(wGeo, wMat);
+      wall.position.y = 0.5;
+      group.add(wall);
+    }
+
+    // Glowing top edge line on barrier
+    const topVerts = [];
     for (let i = 0; i < edges.length; i++) {
       const e = edges[i];
       if (!e) continue;
       const p = side === 1 ? e.left : e.right;
-      lineVerts.push(p.x, 1.5, p.y);
+      const c = e.center;
+      const dx = p.x - c.x, dy = p.y - c.y;
+      const dl = Math.hypot(dx, dy) || 1;
+      topVerts.push(p.x + (dx / dl) * barrierOffset, barrierH + 0.5, p.y + (dy / dl) * barrierOffset);
     }
-    if (lineVerts.length > 3) {
-      const lineGeo = new T.BufferGeometry();
-      lineGeo.setAttribute("position", new T.Float32BufferAttribute(lineVerts, 3));
-      const lineMat = new T.LineBasicMaterial({ color: side === 1 ? 0x7b75ff : 0x57f2ff, linewidth: 2 });
-      group.add(game.track.isOpen ? new T.Line(lineGeo, lineMat) : new T.LineLoop(lineGeo, lineMat));
+    if (topVerts.length > 3) {
+      const tGeo = new T.BufferGeometry();
+      tGeo.setAttribute("position", new T.Float32BufferAttribute(topVerts, 3));
+      const tMat = new T.LineBasicMaterial({ color: side === 1 ? 0x7b75ff : 0xff4d6d, linewidth: 2 });
+      group.add(game.track.isOpen ? new T.Line(tGeo, tMat) : new T.LineLoop(tGeo, tMat));
     }
   }
 
@@ -10379,6 +10438,39 @@ function rebuild3DTrack() {
     const centerLine = game.track.isOpen ? new T.Line(centerGeo, centerMat) : new T.LineLoop(centerGeo, centerMat);
     centerLine.computeLineDistances();
     group.add(centerLine);
+  }
+
+  // Start/finish arch gate (for closed circuits)
+  if (!game.track.isOpen && edges.length > 1) {
+    const e = edges[0];
+    const archW = Math.hypot(e.left.x - e.right.x, e.left.y - e.right.y);
+    const archH = 40;
+    const archGroup = new T.Group();
+    const archMat = new T.MeshStandardMaterial({ color: 0xffd86b, emissive: 0xffd86b, emissiveIntensity: 0.5, metalness: 0.7, roughness: 0.3 });
+    // Left pillar
+    const pillarGeo = new T.BoxGeometry(4, archH, 4);
+    const lp = new T.Mesh(pillarGeo, archMat);
+    lp.position.set(e.left.x, archH / 2, e.left.y);
+    archGroup.add(lp);
+    // Right pillar
+    const rp = new T.Mesh(pillarGeo, archMat);
+    rp.position.set(e.right.x, archH / 2, e.right.y);
+    archGroup.add(rp);
+    // Top beam
+    const beamLen = archW;
+    const beamGeo = new T.BoxGeometry(beamLen, 4, 6);
+    const beam = new T.Mesh(beamGeo, archMat);
+    beam.position.set((e.left.x + e.right.x) / 2, archH, (e.left.y + e.right.y) / 2);
+    beam.rotation.y = -Math.atan2(e.left.y - e.right.y, e.left.x - e.right.x);
+    archGroup.add(beam);
+    // Checkered banner under beam
+    const bannerGeo = new T.PlaneGeometry(beamLen * 0.9, 8);
+    const bannerMat = new T.MeshStandardMaterial({ color: 0xffffff, emissive: 0xffd86b, emissiveIntensity: 0.3, side: T.DoubleSide });
+    const banner = new T.Mesh(bannerGeo, bannerMat);
+    banner.position.set((e.left.x + e.right.x) / 2, archH - 6, (e.left.y + e.right.y) / 2);
+    banner.rotation.y = -Math.atan2(e.left.y - e.right.y, e.left.x - e.right.x);
+    archGroup.add(banner);
+    group.add(archGroup);
   }
 
   // Build kart models for all active karts
