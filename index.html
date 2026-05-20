@@ -1460,6 +1460,11 @@ function applyDeauthShockwave(sourceKart) {
     game.flash = Math.max(game.flash, 6 + affected);
     showComboHit(sourceKart, affected);
   }
+
+  // Spawn 3D shockwave rings
+  if (game.viewMode === "3d" && window.THREE && THREE_STATE.scene) {
+    spawn3DShockwave(sourceKart.x, sourceKart.y, radius, "#ff3366");
+  }
 }
 
 function showComboHit(kart, count) {
@@ -10517,37 +10522,41 @@ function rebuild3DTrack() {
   if (game.track.boostPads) {
     game.track.boostPads.forEach(bp => {
       const padGroup = new T.Group();
+      const pw = bp.h || 36;
+      const ph = bp.w || 70;
       // Base pad
-      const padGeo = new T.BoxGeometry(bp.w || 70, 1.5, bp.h || 36);
+      const padGeo = new T.BoxGeometry(pw, 1.5, ph);
       const padMat = new T.MeshStandardMaterial({
         color: 0xa4ff80, emissive: 0xa4ff80, emissiveIntensity: 0.5,
-        transparent: true, opacity: 0.6,
+        transparent: true, opacity: 0.5,
       });
       padGroup.add(new T.Mesh(padGeo, padMat));
-      // Chevron arrows (3 stacked)
-      const arrowMat = new T.MeshStandardMaterial({ color: 0xffffff, emissive: 0xa4ff80, emissiveIntensity: 1.2, transparent: true, opacity: 0.8 });
+      // Chevron arrows pointing forward (+Z in local space = travel direction)
+      const arrowMat = new T.MeshStandardMaterial({ color: 0xffffff, emissive: 0xa4ff80, emissiveIntensity: 1.2, transparent: true, opacity: 0.8, side: T.DoubleSide });
       for (let a = 0; a < 3; a++) {
+        const hw = pw * 0.35;
         const arrowGeo = new T.BufferGeometry();
         arrowGeo.setAttribute("position", new T.Float32BufferAttribute([
-          0, 0, -10, -12, 0, 4, 0, 0, 0,
-          0, 0, -10, 0, 0, 0, 12, 0, 4,
+          0, 0, 8, -hw, 0, -6, 0, 0, -2,
+          0, 0, 8, 0, 0, -2, hw, 0, -6,
         ], 3));
         arrowGeo.computeVertexNormals();
         const arrow = new T.Mesh(arrowGeo, arrowMat);
-        arrow.position.z = -10 + a * 10;
+        arrow.position.z = -ph * 0.3 + a * (ph * 0.3);
         arrow.position.y = 1.2;
         padGroup.add(arrow);
       }
-      // Side glow bars
+      // Side glow bars along the pad edges
       const barMat = new T.MeshStandardMaterial({ color: 0xa4ff80, emissive: 0xa4ff80, emissiveIntensity: 0.9 });
-      [[-1, 1], [1, 1]].forEach(([s]) => {
-        const bar = new T.Mesh(new T.BoxGeometry(2, 2, (bp.h || 36) + 4), barMat);
-        bar.position.x = s * ((bp.w || 70) / 2 + 1);
+      for (const s of [-1, 1]) {
+        const bar = new T.Mesh(new T.BoxGeometry(2, 2.5, ph + 4), barMat);
+        bar.position.x = s * (pw / 2 + 1);
         bar.position.y = 1.5;
         padGroup.add(bar);
-      });
+      }
+      // The pad's local +Z should point along bp.ang (travel direction)
       padGroup.position.set(bp.x, 1.5, bp.y);
-      padGroup.rotation.y = -(bp.ang || 0) + Math.PI / 2;
+      padGroup.rotation.y = -bp.ang;
       padGroup._boostPadRef = bp;
       padGroup._padMat = padMat;
       group.add(padGroup);
@@ -10987,25 +10996,40 @@ function createHazardMesh3D(hazard) {
     mesh = g;
 
   } else if (ctor === "DoubleBlindCloud") {
-    // Clinical trial double-blind fog (layered translucent spheres with "?" inside)
+    // Dense volumetric fog cloud made of many overlapping billowed spheres
     const g = new T.Group();
-    for (let i = 0; i < 5; i++) {
-      const r = Math.max(14, (hazard.r || 48) * (0.25 + i * 0.1));
+    const baseR = Math.max(20, (hazard.r || 48) * 0.4);
+    // Core cluster: many offset spheres at varying sizes for cloudiness
+    for (let i = 0; i < 14; i++) {
+      const ang = (i / 14) * Math.PI * 2;
+      const layerR = (i < 5) ? baseR * 0.5 : (i < 10 ? baseR * 0.7 : baseR * 0.35);
+      const dist3 = (i < 5) ? 0 : (i < 10 ? baseR * 0.45 : baseR * 0.7);
+      const yOff = (i % 3 === 0) ? 8 : (i % 3 === 1 ? 0 : -4);
       const s = new T.Mesh(
-        new T.SphereGeometry(r, 12, 8),
-        new T.MeshStandardMaterial({ color: 0xbd57ff, emissive: 0xbd57ff, emissiveIntensity: 0.4 - i * 0.05, transparent: true, opacity: 0.12 + i * 0.04 })
+        new T.SphereGeometry(layerR, 8, 6),
+        new T.MeshStandardMaterial({
+          color: i < 5 ? 0xd480ff : 0xbd57ff,
+          emissive: 0xbd57ff,
+          emissiveIntensity: 0.3 + (i < 5 ? 0.2 : 0),
+          transparent: true,
+          opacity: i < 5 ? 0.22 : 0.12,
+        })
       );
-      s.position.set(Math.sin(i * 1.3) * 8, i * 3, Math.cos(i * 1.3) * 8);
+      s.position.set(Math.cos(ang) * dist3, yOff + Math.sin(i * 0.7) * 6, Math.sin(ang) * dist3);
+      s._cloudIdx = i;
       g.add(s);
     }
-    const core = new T.Mesh(
-      new T.IcosahedronGeometry(8),
-      new T.MeshStandardMaterial({ color: 0xffffff, emissive: 0xbd57ff, emissiveIntensity: 1.0, wireframe: true, transparent: true, opacity: 0.5 })
+    // Inner toxic glow
+    const glow = new T.Mesh(
+      new T.SphereGeometry(baseR * 0.3, 10, 8),
+      new T.MeshStandardMaterial({ color: 0xffffff, emissive: 0xbd57ff, emissiveIntensity: 1.5, transparent: true, opacity: 0.35 })
     );
-    g.add(core);
-    const light = new T.PointLight(0xbd57ff, 0.6, 100);
+    g.add(glow);
+    const light = new T.PointLight(0xbd57ff, 0.8, 140);
+    light.position.y = 5;
     g.add(light);
-    g.position.y = 18;
+    g.position.y = 16;
+    g._cloudBase = baseR;
     mesh = g;
 
   } else if (ctor === "RegulatoryProjectile") {
@@ -11233,6 +11257,7 @@ function sync3DScene(time) {
 
   syncHazards3D(time);
   syncDragons3D(time);
+  update3DShockwaves();
 }
 
 function sync3DUltimates(time) {
@@ -11380,6 +11405,60 @@ function sync3DUltimates(time) {
   }
 }
 
+// 3D shockwave expanding ring effects
+if (!THREE_STATE._shockwaves) THREE_STATE._shockwaves = [];
+
+function spawn3DShockwave(x, z, maxRadius, colorHex) {
+  if (!window.THREE || !THREE_STATE.scene) return;
+  const T = window.THREE;
+  const col = new T.Color(colorHex);
+  for (let i = 0; i < 3; i++) {
+    const ringGeo = new T.TorusGeometry(10, 2.5 - i * 0.5, 8, 32);
+    const ringMat = new T.MeshStandardMaterial({
+      color: col, emissive: col, emissiveIntensity: 1.5,
+      transparent: true, opacity: 0.85, side: T.DoubleSide,
+    });
+    const ring = new T.Mesh(ringGeo, ringMat);
+    ring.position.set(x, 8 + i * 6, z);
+    ring.rotation.x = Math.PI / 2;
+    THREE_STATE.scene.add(ring);
+    const light = (i === 0) ? new T.PointLight(col, 1.5, maxRadius * 2) : null;
+    if (light) { light.position.set(x, 20, z); THREE_STATE.scene.add(light); }
+    THREE_STATE._shockwaves.push({
+      mesh: ring, light, maxRadius, age: 0, delay: i * 4,
+      startX: x, startZ: z,
+    });
+  }
+}
+
+function update3DShockwaves() {
+  if (!THREE_STATE._shockwaves.length) return;
+  const toRemove = [];
+  for (const sw of THREE_STATE._shockwaves) {
+    sw.age++;
+    if (sw.age < sw.delay) { sw.mesh.visible = false; continue; }
+    sw.mesh.visible = true;
+    const life = sw.age - sw.delay;
+    const maxLife = 45;
+    const t = life / maxLife;
+    if (t >= 1) { toRemove.push(sw); continue; }
+    const currentR = sw.maxRadius * t;
+    const scale = Math.max(0.1, currentR / 10);
+    sw.mesh.scale.set(scale, scale, 1);
+    sw.mesh.material.opacity = (1 - t) * 0.8;
+    sw.mesh.material.emissiveIntensity = (1 - t) * 2.0;
+    if (sw.light) {
+      sw.light.intensity = (1 - t) * 2.0;
+    }
+  }
+  for (const sw of toRemove) {
+    THREE_STATE.scene.remove(sw.mesh);
+    dispose3DObject(sw.mesh);
+    if (sw.light) THREE_STATE.scene.remove(sw.light);
+    THREE_STATE._shockwaves.splice(THREE_STATE._shockwaves.indexOf(sw), 1);
+  }
+}
+
 function syncHazards3D(time) {
   if (!THREE_STATE.scene || !window.THREE) return;
   const live = new Set(game.hazards || []);
@@ -11396,11 +11475,23 @@ function syncHazards3D(time) {
     mesh.position.x = hazard.x;
     mesh.position.z = hazard.y;
     mesh.rotation.y = -(hazard.heading || 0) + Math.PI / 2 + (hazard.spin || 0);
-    mesh.rotation.x += 0.03;
-    if (hazard.constructor?.name === "DoubleBlindCloud") {
+    const ctor2 = hazard.constructor?.name || "";
+    if (ctor2 === "DoubleBlindCloud") {
       const a = clamp((hazard.life || 240) / 240, 0, 1);
-      mesh.scale.setScalar(1 + Math.sin(time * 0.006 + hazard.phase) * 0.08);
-      if (mesh.material) mesh.material.opacity = 0.18 + 0.22 * a;
+      const sizeScale = Math.min(1.4, (hazard.r || 48) / 48);
+      mesh.scale.setScalar(sizeScale * (1 + Math.sin(time * 0.004 + (hazard.phase || 0)) * 0.06));
+      // Animate individual cloud puffs for roiling effect
+      mesh.children.forEach(child => {
+        if (child._cloudIdx !== undefined) {
+          const ci = child._cloudIdx;
+          child.position.y += Math.sin(time * 0.003 + ci * 0.9) * 0.04;
+          child.position.x += Math.cos(time * 0.002 + ci * 1.1) * 0.03;
+          child.position.z += Math.sin(time * 0.0025 + ci * 0.7) * 0.03;
+          if (child.material) child.material.opacity = (ci < 5 ? 0.18 : 0.10) * a + Math.sin(time * 0.005 + ci) * 0.04;
+        }
+      });
+    } else if (ctor2 !== "DoubleBlindCloud") {
+      mesh.rotation.x += 0.03;
     }
   }
   for (const [hazard, mesh] of THREE_STATE.hazardMeshes) {
