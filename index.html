@@ -955,6 +955,13 @@ const TUNING = {
 
   // Music
   FINAL_LAP_TEMPO_BOOST: 18,
+
+  // P2P sync
+  P2P_MAX_BUFFERED_BYTES: 64 * 1024,
+  P2P_PICKUP_FULL_SYNC_INTERVAL_MS: 1200,
+  P2P_REMOTE_INTERP: 0.55,
+  P2P_REMOTE_SNAP_DIST: 240,
+  P2P_REMOTE_VELOCITY_LEAD: 1.5,
 };
 
 // ---- Character Configurations ----
@@ -4020,6 +4027,14 @@ const MAPS = [
     },
     boostPadSegs: [2, 6, 9, 12],
     itemBoxSegs: [0, 3, 5, 8, 11, 13],
+    regulatoryDragon: {
+      startX: -180,
+      startY: 1320,
+      baseGap: 820,
+      minGap: 280,
+      closeSeconds: 85,
+      fireEvery: 88
+    },
     desc: "A high-stakes regulatory audit track with a massive bureaucratic dragon chasing you. Dodge firewalls, compliance gates, and audit trails while the Regulatory Dragon breathes down your neck!"
   },
   {
@@ -6452,6 +6467,7 @@ const game = {
   dragonFireTimer: 0,
   dragonWarnTimer: 0,
   bestLap: 0,
+  p2pLastPickupSyncAt: 0,
 };
 
 function renderSelectScreen() {
@@ -6829,8 +6845,21 @@ function getP2pIdForConn(conn) {
   return null;
 }
 
+function isHighFrequencyP2pMessage(data) {
+  return data && (data.type === "host_sync" || data.type === "guest_sync");
+}
+
 function sendToConn(conn, data) {
-  if (conn && conn.open) conn.send(data);
+  if (!conn || !conn.open) return;
+  const dataChannel = conn._dc || conn.dataChannel;
+  if (
+    isHighFrequencyP2pMessage(data) &&
+    dataChannel &&
+    dataChannel.bufferedAmount > TUNING.P2P_MAX_BUFFERED_BYTES
+  ) {
+    return;
+  }
+  conn.send(data);
 }
 
 function broadcastP2pMessage(data, exceptConn = null) {
@@ -6863,6 +6892,7 @@ function buildRace() {
   game.dragonTimer = 0;
   game.dragonFireTimer = 0;
   game.dragonWarnTimer = 60; // First warning after about 1 second
+  game.p2pLastPickupSyncAt = 0;
 
   // Set music style based on map
   const mapId = MAPS[game.selectedMapIdx || 0].id;
@@ -7171,7 +7201,8 @@ function checkProgress(kart) {
    ============================================================ */
 function checkItems(kart) {
   // Coins
-  for (const c of game.track.coins) {
+  for (let i = 0; i < game.track.coins.length; i++) {
+    const c = game.track.coins[i];
     if (c.collected) {
       if (c.respawn > 0) {
         c.respawn--;
@@ -7183,6 +7214,7 @@ function checkItems(kart) {
       c.collected = true;
       c.respawn = 700; // many frames before respawn
       kart.coinsCollected++;
+      requestP2pPickup("coin", i, kart);
       if (kart.isPlayer) {
         Sound.coin();
         game.particles.burst(c.x, c.y, "#ffd86b", 10, { type: "spark" });
@@ -7213,7 +7245,8 @@ function checkItems(kart) {
   }
 
   // Item boxes
-  for (const b of game.track.itemBoxes) {
+  for (let i = 0; i < game.track.itemBoxes.length; i++) {
+    const b = game.track.itemBoxes[i];
     if (!b.active) {
       b.respawn--;
       if (b.respawn <= 0) b.active = true;
@@ -7222,6 +7255,7 @@ function checkItems(kart) {
     if (dist(kart.x, kart.y, b.x, b.y) < 24) {
       b.active = false;
       b.respawn = 240;
+      requestP2pPickup("itemBox", i, kart);
 
       // Mario Kart-style Item Slot Roulette trigger
       if (kart.itemState === "empty") {
@@ -7234,6 +7268,72 @@ function checkItems(kart) {
         }
       }
     }
+  }
+}
+
+function requestP2pPickup(pickup, index, kart) {
+  if (!game.p2pMode || game.p2pRole !== "guest" || kart !== game.player) return;
+  sendP2pMessage({
+    type: "pickup_request",
+    pickup,
+    index,
+    kartId: getKartId(kart)
+  });
+}
+
+function applyP2pPickupRequest(data, sourceConn = null) {
+  if (game.p2pRole !== "host" || !game.track) return false;
+
+  const index = Math.floor(Number(data.index));
+  if (!Number.isFinite(index) || index < 0) return false;
+
+  const requesterId = getP2pIdForConn(sourceConn) || data.kartId;
+  const kart = getKartById(requesterId);
+  if (!kart || kart.finished || kart.eliminated) return false;
+
+  if (data.pickup === "coin") {
+    const coin = game.track.coins[index];
+    if (!coin || coin.collected) return false;
+    coin.collected = true;
+    coin.respawn = 700;
+    kart.coinsCollected++;
+    return true;
+  }
+
+  if (data.pickup === "itemBox") {
+    const box = game.track.itemBoxes[index];
+    if (!box || !box.active) return false;
+    box.active = false;
+    box.respawn = 240;
+    if (kart.itemState === "empty") {
+      kart.itemState = "rolling";
+      kart.itemRollTimer = TUNING.ITEM_ROLL_TIME;
+    }
+    return true;
+  }
+
+  return false;
+}
+
+function applyP2pPickupState(data) {
+  if (!game.track) return;
+  const index = Math.floor(Number(data.index));
+  if (!Number.isFinite(index) || index < 0) return;
+
+  if (data.pickup === "coin") {
+    const coin = game.track.coins[index];
+    if (!coin) return;
+    coin.collected = true;
+    coin.respawn = 700;
+    const kart = getKartById(data.kartId);
+    if (kart && data.coinsCollected !== undefined) {
+      kart.coinsCollected = Math.max(kart.coinsCollected || 0, data.coinsCollected);
+    }
+  } else if (data.pickup === "itemBox") {
+    const box = game.track.itemBoxes[index];
+    if (!box) return;
+    box.active = false;
+    box.respawn = 240;
   }
 }
 
@@ -9379,7 +9479,7 @@ p2pJoinBtn.addEventListener("click", () => {
 
       peer.on("open", (id) => {
         p2pJoinStatus.innerText = "Connecting to lobby " + rawCode + "...";
-        const conn = peer.connect("TKD-" + rawCode);
+        const conn = peer.connect("TKD-" + rawCode, { serialization: "json" });
         game.p2pConn = conn;
 
         conn.on("open", () => {
@@ -9511,7 +9611,7 @@ function sendP2pMessage(data) {
     return;
   }
   if (game.p2pConn && game.p2pConn.open) {
-    game.p2pConn.send(data);
+    sendToConn(game.p2pConn, data);
   }
 }
 
@@ -9528,6 +9628,7 @@ function serializeKartState(kart) {
     itemSlot: kart.itemSlot,
     itemState: kart.itemState,
     finished: kart.finished,
+    eliminated: !!kart.eliminated,
     lap: kart.lap,
     nextCheckpoint: kart.nextCheckpoint,
     checkpointsThisLap: kart.checkpointsThisLap,
@@ -9541,11 +9642,29 @@ function serializeKartState(kart) {
   };
 }
 
-function applyKartState(kart, p) {
+function applyKartState(kart, p, opts = {}) {
   if (!kart || !p) return;
-  kart.x = p.x;
-  kart.y = p.y;
-  kart.heading = p.heading;
+
+  const smooth = !!opts.smooth && !p.finished && !p.eliminated;
+  if (smooth && Number.isFinite(kart.x) && Number.isFinite(kart.y)) {
+    const targetX = p.x + (p.vx || 0) * TUNING.P2P_REMOTE_VELOCITY_LEAD;
+    const targetY = p.y + (p.vy || 0) * TUNING.P2P_REMOTE_VELOCITY_LEAD;
+    const delta = dist(kart.x, kart.y, targetX, targetY);
+    if (delta > TUNING.P2P_REMOTE_SNAP_DIST) {
+      kart.x = p.x;
+      kart.y = p.y;
+      kart.heading = p.heading;
+    } else {
+      kart.x = lerp(kart.x, targetX, TUNING.P2P_REMOTE_INTERP);
+      kart.y = lerp(kart.y, targetY, TUNING.P2P_REMOTE_INTERP);
+      kart.heading += angleDiff(kart.heading, p.heading) * TUNING.P2P_REMOTE_INTERP;
+    }
+  } else {
+    kart.x = p.x;
+    kart.y = p.y;
+    kart.heading = p.heading;
+  }
+
   kart.vx = p.vx;
   kart.vy = p.vy;
   kart.boostTimer = p.boostTimer;
@@ -9553,6 +9672,7 @@ function applyKartState(kart, p) {
   kart.itemSlot = p.itemSlot;
   kart.itemState = p.itemState;
   kart.finished = p.finished;
+  if (p.eliminated !== undefined) kart.eliminated = !!p.eliminated;
   kart.lap = p.lap;
   if (p.nextCheckpoint !== undefined) kart.nextCheckpoint = p.nextCheckpoint;
   if (p.checkpointsThisLap !== undefined) kart.checkpointsThisLap = p.checkpointsThisLap;
@@ -9599,6 +9719,9 @@ function applyDragonState(state) {
 
 function sendHostSync() {
   if (!game.player) return;
+  const now = performance.now();
+  const includePickupState = !game.p2pLastPickupSyncAt ||
+    now - game.p2pLastPickupSyncAt >= TUNING.P2P_PICKUP_FULL_SYNC_INTERVAL_MS;
   const sync = {
     type: "host_sync",
     raceTime: game.raceTime,
@@ -9643,8 +9766,6 @@ function sendHostSync() {
       mergePullTimer: ai.mergePullTimer || 0,
       mergePullTargetId: ai.mergePullTargetId || null
     })),
-    coins: game.track.coins.map(c => c.collected),
-    itemBoxes: game.track.itemBoxes.map(b => b.active),
     hazards: (game.hazards || []).map(h => ({
       isDossier: h instanceof DossierProjectile,
       isRegulatory: h instanceof RegulatoryProjectile,
@@ -9666,6 +9787,11 @@ function sendHostSync() {
       sizePhase: h.sizePhase || 0
     }))
   };
+  if (includePickupState) {
+    game.p2pLastPickupSyncAt = now;
+    sync.coins = game.track.coins.map(c => c.collected);
+    sync.itemBoxes = game.track.itemBoxes.map(b => b.active);
+  }
   sendP2pMessage(sync);
 }
 
@@ -9832,52 +9958,18 @@ function handleP2pData(data, sourceConn = null) {
           }
           continue;
         }
-        applyKartState(getKartById(playerState.id), playerState.state);
+        applyKartState(getKartById(playerState.id), playerState.state, { smooth: true });
       }
     }
 
     if (game.player2 && data.p2) {
-      const p = data.p2;
-      game.player2.x = p.x;
-      game.player2.y = p.y;
-      game.player2.heading = p.heading;
-      game.player2.vx = p.vx;
-      game.player2.vy = p.vy;
-      game.player2.boostTimer = p.boostTimer;
-      game.player2.shieldTimer = p.shieldTimer;
-      game.player2.itemSlot = p.itemSlot;
-      game.player2.itemState = p.itemState;
-      game.player2.finished = p.finished;
-      game.player2.lap = p.lap;
-      game.player2.activeQuote = p.activeQuote;
-      game.player2.quoteTimer = p.quoteTimer;
-      game.player2.spinoutTimer = p.spinoutTimer;
-      game.player2.coinsCollected = p.coinsCollected;
-      game.player2.mergePullTimer = p.mergePullTimer || 0;
-      game.player2.mergePullTargetId = p.mergePullTargetId || null;
-      game.player2.mergePullTarget = getKartById(game.player2.mergePullTargetId);
+      applyKartState(game.player2, data.p2, { smooth: true });
     }
 
     if (game.ais && data.ais) {
       for (let i = 0; i < game.ais.length; i++) {
         if (data.ais[i]) {
-          const ai = game.ais[i];
-          const p = data.ais[i];
-          ai.x = p.x;
-          ai.y = p.y;
-          ai.heading = p.heading;
-          ai.vx = p.vx;
-          ai.vy = p.vy;
-          ai.boostTimer = p.boostTimer;
-          ai.shieldTimer = p.shieldTimer;
-          ai.finished = p.finished;
-          ai.lap = p.lap;
-          ai.spinoutTimer = p.spinoutTimer;
-          ai.activeQuote = p.activeQuote;
-          ai.quoteTimer = p.quoteTimer;
-          ai.mergePullTimer = p.mergePullTimer || 0;
-          ai.mergePullTargetId = p.mergePullTargetId || null;
-          ai.mergePullTarget = getKartById(ai.mergePullTargetId);
+          applyKartState(game.ais[i], data.ais[i], { smooth: true });
         }
       }
     }
@@ -9932,34 +10024,35 @@ function handleP2pData(data, sourceConn = null) {
     }
   }
 
+  else if (data.type === "pickup_request") {
+    if (applyP2pPickupRequest(data, sourceConn)) {
+      const requesterId = getP2pIdForConn(sourceConn) || data.kartId;
+      const requester = getKartById(requesterId);
+      broadcastP2pMessage({
+        type: "pickup_confirm",
+        pickup: data.pickup,
+        index: data.index,
+        kartId: requesterId,
+        coinsCollected: requester ? requester.coinsCollected : undefined
+      });
+      sendHostSync();
+    }
+  }
+
+  else if (data.type === "pickup_confirm") {
+    applyP2pPickupState(data);
+  }
+
   else if (data.type === "guest_sync") {
     if (data.playerId && data.state) {
-      applyKartState(getKartById(data.playerId), data.state);
+      applyKartState(getKartById(data.playerId), data.state, { smooth: true });
       if (game.p2pRole === "host") {
         broadcastP2pMessage(data, sourceConn);
       }
       return;
     }
     if (game.player2 && data.p2) {
-      const p = data.p2;
-      game.player2.x = p.x;
-      game.player2.y = p.y;
-      game.player2.heading = p.heading;
-      game.player2.vx = p.vx;
-      game.player2.vy = p.vy;
-      game.player2.boostTimer = p.boostTimer;
-      game.player2.shieldTimer = p.shieldTimer;
-      game.player2.itemSlot = p.itemSlot;
-      game.player2.itemState = p.itemState;
-      game.player2.finished = p.finished;
-      game.player2.lap = p.lap;
-      game.player2.activeQuote = p.activeQuote;
-      game.player2.quoteTimer = p.quoteTimer;
-      game.player2.spinoutTimer = p.spinoutTimer;
-      game.player2.coinsCollected = p.coinsCollected;
-      game.player2.mergePullTimer = p.mergePullTimer || 0;
-      game.player2.mergePullTargetId = p.mergePullTargetId || null;
-      game.player2.mergePullTarget = getKartById(game.player2.mergePullTargetId);
+      applyKartState(game.player2, data.p2, { smooth: true });
     }
   }
 
