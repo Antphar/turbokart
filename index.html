@@ -5744,6 +5744,37 @@ class Track {
     return group.some(point => dist(x, y, point.x, point.y) <= (point.r || CHECKPOINT_RADIUS));
   }
 
+  startLineGate() {
+    const s = this.segments[0];
+    if (!s) return null;
+    const ux = s.dx / s.len;
+    const uy = s.dy / s.len;
+    return {
+      x: s.a.x + s.dx * 0.06,
+      y: s.a.y + s.dy * 0.06,
+      ux,
+      uy,
+      nx: s.nx,
+      ny: s.ny,
+      halfW: s.halfW,
+    };
+  }
+
+  crossedStartLine(prevX, prevY, x, y) {
+    const gate = this.startLineGate();
+    if (!gate || !Number.isFinite(prevX) || !Number.isFinite(prevY)) return false;
+    const prevAlong = (prevX - gate.x) * gate.ux + (prevY - gate.y) * gate.uy;
+    const currAlong = (x - gate.x) * gate.ux + (y - gate.y) * gate.uy;
+    if (!(prevAlong <= 0 && currAlong > 0)) return false;
+
+    const denom = currAlong - prevAlong;
+    const t = denom !== 0 ? clamp(-prevAlong / denom, 0, 1) : 0;
+    const ix = lerp(prevX, x, t);
+    const iy = lerp(prevY, y, t);
+    const lateral = Math.abs((ix - gate.x) * gate.nx + (iy - gate.y) * gate.ny);
+    return lateral <= gate.halfW + 12;
+  }
+
   // Find closest segment to a world point
   closestSegment(x, y) {
     let bestI = 0, bestD = Infinity, bestT = 0, bestProj = null;
@@ -6658,12 +6689,12 @@ class Track {
   }
 
   _drawStartLine(ctx) {
-    // Place along segment 0 near waypoint 0, perpendicular
-    const s = this.segments[0];
-    const px = s.a.x + s.dx * 0.06;
-    const py = s.a.y + s.dy * 0.06;
-    const ang = Math.atan2(s.dy, s.dx);
-    const halfW = s.halfW;
+    const gate = this.startLineGate();
+    if (!gate) return;
+    const px = gate.x;
+    const py = gate.y;
+    const ang = Math.atan2(gate.uy, gate.ux);
+    const halfW = gate.halfW;
     ctx.save();
     ctx.translate(px, py);
     ctx.rotate(ang);
@@ -7341,6 +7372,8 @@ class Kart {
     this.nextCheckpoint = 1;
     this.lap = 0;
     this.checkpointsThisLap = 0;
+    this.progressPrevX = x;
+    this.progressPrevY = y;
     this.finished = false;
     this.finishTime = 0;
 
@@ -9831,14 +9864,52 @@ function getWeightedItem(kart) {
   return "boost";
 }
 
+function completeClosedCircuitLap(kart) {
+  kart.lap++;
+  triggerQuote(kart, "lap");
+  if (kart.isPlayer) Sound.lap();
+  if (kart.isPlayer && kart.lap === TOTAL_LAPS - 1 && !isDragonEscape()) {
+    triggerHitFlash("FINAL LAP!", "#ffd86b", 120, kart);
+    game.shake = Math.max(game.shake, 6);
+    game.flash = Math.max(game.flash, 8);
+  }
+  if (kart.lap >= TOTAL_LAPS) {
+    kart.finished = true;
+    kart.finishTime = (performance.now() - game.startTime) / 1000;
+    if (!game.finishOrder.includes(kart)) game.finishOrder.push(kart);
+    if (kart.isPlayer) {
+      const colors = ["#ff4d6d", "#a4ff80", "#7b75ff", "#ffd86b", "#00f0ff"];
+      for (let i = 0; i < 75; i++) {
+        const ang = Math.random() * Math.PI * 2;
+        const sp = rand(3, 10);
+        game.particles.add({
+          type: "rect", x: kart.x, y: kart.y,
+          vx: Math.cos(ang) * sp, vy: Math.sin(ang) * sp,
+          life: rand(45, 90), maxLife: 90, size: rand(6, 13),
+          color: colors[Math.floor(Math.random() * colors.length)],
+          drag: 0.95, angle: Math.random() * Math.PI * 2, spin: rand(-0.15, 0.15),
+        });
+      }
+      game.slowMoEnd = performance.now() + 1500;
+      let allHumanFinished = true;
+      if (game.player && !game.player.finished) allHumanFinished = false;
+      if (game.multiplayer && game.player2 && !game.player2.finished) allHumanFinished = false;
+      if (allHumanFinished) setTimeout(() => finishRace(), 1500);
+    }
+  }
+}
+
 function checkProgress(kart) {
   if (kart.finished) return;
   const open = game.track.isOpen;
   const checkpointCount = game.track.checkpointCount || game.track.n;
   const checkpointIdx = open ? Math.min(kart.nextCheckpoint, checkpointCount - 1) : (kart.nextCheckpoint % checkpointCount);
   let hitCheckpoint = false;
+  const completingLapAtGoalLine = !open && checkpointIdx === 0 && kart.checkpointsThisLap >= checkpointCount - 1;
 
-  if (game.track.hitCheckpoint(checkpointIdx, kart.x, kart.y)) {
+  if (completingLapAtGoalLine) {
+    hitCheckpoint = game.track.crossedStartLine(kart.progressPrevX, kart.progressPrevY, kart.x, kart.y);
+  } else if (game.track.hitCheckpoint(checkpointIdx, kart.x, kart.y)) {
     hitCheckpoint = true;
   } else if (open && !game.track.hasCustomCheckpoints) {
     const cs = game.track.closestSegment(kart.x, kart.y);
@@ -9849,11 +9920,7 @@ function checkProgress(kart) {
     }
   }
 
-  // For closed circuits, only count the finish-line checkpoint (wrapping to 0)
-  // if the kart actually crosses the start/finish segment geometry
-  const isFinishCheckpoint = !open && kart.nextCheckpoint === checkpointCount - 1 &&
-    kart.checkpointsThisLap >= checkpointCount - 2;
-  if (!hitCheckpoint && !open && !game.track.hasCustomCheckpoints) {
+  if (!hitCheckpoint && !open && !game.track.hasCustomCheckpoints && !completingLapAtGoalLine) {
     const cs = game.track.closestSegment(kart.x, kart.y);
     const cpSeg = game.track.segments[kart.nextCheckpoint];
     const maxDist = cpSeg ? cpSeg.halfW + 20 : 100;
@@ -9882,47 +9949,18 @@ function checkProgress(kart) {
         kart.nextCheckpoint = checkpointCount - 1;
       }
     } else {
-      // Closed circuit: wrap and check finish
+      // Closed circuit: final checkpoint arms the lap, the goal-line crossing completes it.
       if (kart.nextCheckpoint >= checkpointCount) {
         kart.nextCheckpoint = 0;
-        if (kart.checkpointsThisLap >= checkpointCount - 1) {
-          kart.lap++;
-          triggerQuote(kart, "lap");
-          if (kart.isPlayer) Sound.lap();
-          if (kart.isPlayer && kart.lap === TOTAL_LAPS - 1 && !isDragonEscape()) {
-            triggerHitFlash("FINAL LAP!", "#ffd86b", 120, kart);
-            game.shake = Math.max(game.shake, 6);
-            game.flash = Math.max(game.flash, 8);
-          }
-          if (kart.lap >= TOTAL_LAPS) {
-            kart.finished = true;
-            kart.finishTime = (performance.now() - game.startTime) / 1000;
-            if (!game.finishOrder.includes(kart)) game.finishOrder.push(kart);
-            if (kart.isPlayer) {
-              const colors = ["#ff4d6d", "#a4ff80", "#7b75ff", "#ffd86b", "#00f0ff"];
-              for (let i = 0; i < 75; i++) {
-                const ang = Math.random() * Math.PI * 2;
-                const sp = rand(3, 10);
-                game.particles.add({
-                  type: "rect", x: kart.x, y: kart.y,
-                  vx: Math.cos(ang) * sp, vy: Math.sin(ang) * sp,
-                  life: rand(45, 90), maxLife: 90, size: rand(6, 13),
-                  color: colors[Math.floor(Math.random() * colors.length)],
-                  drag: 0.95, angle: Math.random() * Math.PI * 2, spin: rand(-0.15, 0.15),
-                });
-              }
-              game.slowMoEnd = performance.now() + 1500;
-              let allHumanFinished = true;
-              if (game.player && !game.player.finished) allHumanFinished = false;
-              if (game.multiplayer && game.player2 && !game.player2.finished) allHumanFinished = false;
-              if (allHumanFinished) setTimeout(() => finishRace(), 1500);
-            }
-          }
-        }
+      } else if (kart.nextCheckpoint === 1 && kart.checkpointsThisLap >= checkpointCount) {
+        completeClosedCircuitLap(kart);
         kart.checkpointsThisLap = 0;
       }
     }
   }
+
+  kart.progressPrevX = kart.x;
+  kart.progressPrevY = kart.y;
 }
 
 /* ============================================================
@@ -14022,10 +14060,9 @@ function sync3DSpectators(time) {
 function build3DStartLine() {
   if (!window.THREE || !THREE_STATE.scene || !game.track || game.track.isOpen) return;
   const T = window.THREE;
-  const edges = get3DRoadEdges(game.track);
-  if (edges.length < 2) return;
-  const e = edges[0];
-  const roadW = Math.hypot(e.left.x - e.right.x, e.left.y - e.right.y);
+  const gate = game.track.startLineGate();
+  if (!gate) return;
+  const roadW = gate.halfW * 2;
   const lineW = 12;
 
   const c = document.createElement("canvas");
@@ -14049,11 +14086,8 @@ function build3DStartLine() {
   });
   const mesh = new T.Mesh(geo, mat);
   mesh.rotation.x = -Math.PI / 2;
-  mesh.position.set(
-    (e.left.x + e.right.x) / 2, 0.7,
-    (e.left.y + e.right.y) / 2
-  );
-  mesh.rotation.z = Math.atan2(e.left.y - e.right.y, e.left.x - e.right.x);
+  mesh.position.set(gate.x, 0.7, gate.y);
+  mesh.rotation.z = Math.atan2(gate.ny, gate.nx);
   THREE_STATE.scene.add(mesh);
   THREE_STATE.startLineMesh = mesh;
 }
