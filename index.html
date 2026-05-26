@@ -2645,7 +2645,7 @@ const Sound = {
 
       osc.type = "triangle";
       osc.frequency.setValueAtTime(800, this.ctx.currentTime);
-      g.gain.setValueAtTime(0.001, this.currentTime);
+      g.gain.setValueAtTime(0.001, this.ctx.currentTime);
 
       const filter = this.ctx.createBiquadFilter();
       filter.type = "bandpass";
@@ -4665,6 +4665,7 @@ const MAPS = [
   {
     name: "Core Mainframe Circuit",
     id: "core_mainframe",
+    musicTrack: 0,
     worldW: 3400,
     worldH: 2400,
     waypoints: [
@@ -4701,6 +4702,7 @@ const MAPS = [
   {
     name: "Compliance Chicane",
     id: "compliance_chicane",
+    musicTrack: 1,
     worldW: 2400,
     worldH: 2400,
     waypoints: [
@@ -4729,6 +4731,7 @@ const MAPS = [
   {
     name: "Audit Super Ring",
     id: "audit_super_ring",
+    musicTrack: 3,
     worldW: 3600,
     worldH: 2000,
     waypoints: [
@@ -4749,6 +4752,7 @@ const MAPS = [
   {
     name: "Black Ice Data Vault",
     id: "black_ice_data_vault",
+    musicTrack: 4,
     worldW: 4200,
     worldH: 2800,
     waypoints: [
@@ -4799,6 +4803,7 @@ const MAPS = [
   {
     name: "Regulatory Dragon Run",
     id: "regulatory_dragon_run",
+    musicTrack: 5,
     worldW: 6600,
     worldH: 1900,
     waypoints: [
@@ -4849,6 +4854,7 @@ const MAPS = [
   {
     name: "Dragon's Escape",
     id: "dragon_escape",
+    musicTrack: 2,
     worldW: 490000,
     worldH: 2000,
     waypoints: generateDragonTrail(),
@@ -8532,9 +8538,17 @@ function buildRace() {
   _hazardIdCounter = 0;
 
   // Set music style based on map
-  const mapId = MAPS[game.selectedMapIdx || 0].id;
+  const mapConfig = MAPS[game.selectedMapIdx || 0];
+  const mapId = mapConfig.id;
+  const assignedTrack = Number.isInteger(mapConfig.musicTrack) ? mapConfig.musicTrack : (Sound.trackIdx || 0);
+  Sound.trackIdx = Math.floor(clamp(assignedTrack, 0, Sound.tracks.length - 1));
   Sound.mapStyle = (mapId === "dragon_escape") ? "japanese" : "retro";
-  Sound.tempo = (mapId === "dragon_escape") ? 90 : 124;
+  if (Sound.mapStyle === "retro") {
+    Sound.tempo = (Sound.tracks[Sound.trackIdx] || Sound.tracks[0]).tempo;
+  } else {
+    // Dragon's Escape uses the Japanese procedural arrangement, independent of the menu track.
+    Sound.tempo = 90;
+  }
   // Restart music to pick up style change
   if (Sound.ctx) {
     Sound.stopMusic();
@@ -9367,7 +9381,8 @@ function update(dt, time) {
 
     // Dynamic Retro Soundtrack Final Lap Tempo surge (only for retro music)
     if (game.player && Sound.mapStyle === "retro") {
-      Sound.tempo = game.player.lap >= TOTAL_LAPS - 1 ? 142 : 124;
+      const track = Sound.tracks[Sound.trackIdx || 0] || Sound.tracks[0];
+      Sound.tempo = track.tempo + (game.player.lap >= TOTAL_LAPS - 1 ? TUNING.FINAL_LAP_TEMPO_BOOST : 0);
     }
 
     // Player 1
@@ -9530,8 +9545,8 @@ function update(dt, time) {
                   vx: rand(-0.5, 0.5), vy: -1.2, life: 75, maxLife: 75, size: 20, color: hazardColor, drag: 0.98 });
                 triggerQuote(kart, "crash");
               }
-              break;
             }
+            break;
           }
         }
       }
