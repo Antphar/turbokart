@@ -139,7 +139,7 @@ uv run train_dqn.py \
   --model-name "DQN Self Play Items Stack 2"
 ```
 
-The trainer prints model performance next to the classic waypoint AI reference. Checkpoints are saved to `models/checkpoints/` and added to the model manifest so future self-play runs can sample them.
+The trainer prints model performance next to the classic waypoint AI reference. Intermediate checkpoints are saved locally to `models/checkpoints/` and ignored by Git; only the final `--out` model is added to the model manifest.
 
 Future improvement idea: use behavior cloning from waypoint traces, then fine-tune with PPO or SAC for smoother steering and drift timing. DQN is intentionally the simple debug baseline.
 

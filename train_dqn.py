@@ -903,7 +903,8 @@ def train(args: argparse.Namespace) -> None:
                         "reference": reference_metrics,
                         "attribution": attribution,
                     },
-                    Path(args.manifest),
+                    # Checkpoints stay local and ignored; only final models update the public manifest.
+                    None,
                 )
                 if eval_report["avg_reward"] > best_eval_reward:
                     best_eval_reward = eval_report["avg_reward"]
