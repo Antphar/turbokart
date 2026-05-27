@@ -98,6 +98,51 @@ Since the game is contained entirely in a single file (`index.html`), you can ru
    python3 -m http.server 8000
    ```
 
+### 🤖 Training DQN AI Racers
+
+Trained AI opponents are loaded from `models/manifest.json`. On GitHub Pages or a local HTTP server they appear automatically in the **AI Opponents** selector. If you open `index.html` directly with double-click, use **Import JSON** and select a model file manually.
+
+Train a simple driving model:
+
+```bash
+uv run train_dqn.py \
+  --steps 100000 \
+  --frames 7200 \
+  --episodes-eval 5 \
+  --eval-every 10000 \
+  --out models/dqn-core.json \
+  --model-id dqn-core \
+  --model-name "DQN Core"
+```
+
+Train a harder self-play/items run:
+
+```bash
+uv run train_dqn.py \
+  --steps 300000 \
+  --frames 7200 \
+  --episodes-eval 3 \
+  --reference-episodes 2 \
+  --eval-every 25000 \
+  --random-map \
+  --maps core_mainframe,audit_super_ring,compliance_chicane,black_ice_data_vault,protocol_amendment_labyrinth \
+  --eval-maps core_mainframe,audit_super_ring,compliance_chicane,black_ice_data_vault,protocol_amendment_labyrinth \
+  --random-character \
+  --frame-stack 2 \
+  --with-opponents \
+  --with-items \
+  --self-play \
+  --league-limit 16 \
+  --classic-opponent-prob 0.25 \
+  --out models/dqn-selfplay-items-stack2.json \
+  --model-id dqn-selfplay-items-stack2 \
+  --model-name "DQN Self Play Items Stack 2"
+```
+
+The trainer prints model performance next to the classic waypoint AI reference. Checkpoints are saved to `models/checkpoints/` and added to the model manifest so future self-play runs can sample them.
+
+Future improvement idea: use behavior cloning from waypoint traces, then fine-tune with PPO or SAC for smoother steering and drift timing. DQN is intentionally the simple debug baseline.
+
 ---
 
 ## 📄 License
