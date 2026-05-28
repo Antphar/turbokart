@@ -1986,6 +1986,7 @@ function getUltimateTier(kart) {
 
 function activateUltimate(kart) {
   if (!kart || !kart.ultReady || kart.ultActiveTimer > 0 || kart.finished || kart.eliminated) return;
+  kart.ultUseCount = (kart.ultUseCount || 0) + 1;
   kart.ultReady = false;
   kart.ultCharge = 0;
   const tier = getUltimateTier(kart);
@@ -2152,6 +2153,56 @@ function getDragonTarget() {
   const humans = getActiveHumanKarts();
   if (!humans.length) return null;
   return humans.slice().sort((a, b) => progressValue(a) - progressValue(b))[0];
+}
+
+function createDragonEscapeEntity() {
+  const target = getDragonTarget() || game.player;
+  const heading = target ? target.heading : 0;
+  const fx = Math.cos(heading);
+  const fy = Math.sin(heading);
+  return {
+    x: target ? target.x - fx * 520 : 0,
+    y: target ? target.y - fy * 520 : WORLD_H * 0.5,
+    vx: 0,
+    vy: 0,
+    heading,
+    jawPhase: 0,
+    wingPhase: 0,
+    enraged: false,
+    active: true
+  };
+}
+
+function updateDragonEscapeEntity(dt) {
+  if (!isDragonEscape()) {
+    game.dragonEscape = null;
+    return;
+  }
+  if (!game.dragonEscape) game.dragonEscape = createDragonEscapeEntity();
+  const dragon = game.dragonEscape;
+  const target = getDragonTarget();
+  if (!dragon || !target || game.state !== STATE.RACING) return;
+
+  const fx = Math.cos(target.heading);
+  const fy = Math.sin(target.heading);
+  const lx = -fy;
+  const ly = fx;
+  const intensity = Math.max(clamp(game.raceTime / 90, 0, 1), clamp(game.raceTime / 150, 0, 1));
+  dragon.enraged = intensity > 0.45;
+
+  const gap = lerp(360, 210, intensity);
+  const lateral = Math.sin(game.raceTime * 1.25) * lerp(95, 55, intensity);
+  const desiredX = target.x - fx * gap + lx * lateral;
+  const desiredY = target.y - fy * gap + ly * lateral;
+  const chaseLerp = 1 - Math.pow(0.952 - intensity * 0.018, dt);
+
+  dragon.vx = (desiredX - dragon.x) * chaseLerp;
+  dragon.vy = (desiredY - dragon.y) * chaseLerp;
+  dragon.x += dragon.vx;
+  dragon.y += dragon.vy;
+  dragon.heading = Math.atan2(target.y - dragon.y, target.x - dragon.x);
+  dragon.jawPhase += (dragon.enraged ? 0.24 : 0.16) * dt;
+  dragon.wingPhase += (dragon.enraged ? 0.12 : 0.08) * dt;
 }
 
 function areAllHumansDone() {
@@ -5614,8 +5665,8 @@ const MAPS = [
     regulatoryDragon: {
       startX: -180,
       startY: 1320,
-      baseGap: 820,
-      minGap: 280,
+      baseGap: 360,
+      minGap: 190,
       closeSeconds: 85,
       fireEvery: 88
     },
@@ -6141,7 +6192,7 @@ class Track {
     const lx = -fy;
     const ly = fx;
     const pressure = clamp(game.raceTime / dragon.closeSeconds, 0, 1);
-    const gap = Math.max(210, lerp(dragon.baseGap, dragon.minGap, pressure) - (enraged ? 85 : 0));
+    const gap = Math.max(155, lerp(dragon.baseGap, dragon.minGap, pressure) - (enraged ? 45 : 0));
     const weave = enraged ? 82 : 55;
     const desiredX = target.x - fx * gap + lx * Math.sin(game.raceTime * (enraged ? 2.0 : 1.4)) * weave;
     const desiredY = target.y - fy * gap + ly * Math.sin(game.raceTime * (enraged ? 1.7 : 1.1)) * weave;
@@ -7406,6 +7457,9 @@ class Kart {
     this.itemState = "empty";   // "empty", "rolling", "active"
     this.itemRollTimer = 0;
     this.coinsCollected = 0;
+    this.itemUseCount = 0;
+    this.ultUseCount = 0;
+    this.driftBoostCount = 0;
     this.spinoutTimer = 0;
     this.spinAngle = 0;
     this.gripRecovery = 1.0;
@@ -7451,6 +7505,7 @@ class Kart {
 
   useItem() {
     if (this.itemState !== "active") return;
+    this.itemUseCount = (this.itemUseCount || 0) + 1;
     const type = this.itemSlot;
     this.itemState = "empty";
     this.itemSlot = null;
@@ -7639,8 +7694,9 @@ class Kart {
     const grip = lerp(this.gripDrift, this.gripNormal, this.gripRecovery);
     vL *= Math.pow(1 - grip, dt);
 
-    // Steering — proportional to forward speed; drift gives extra
-    const steerInput = (input.left ? -1 : 0) + (input.right ? 1 : 0);
+    const steerInput = input.continuousSteer !== undefined
+      ? clamp(input.continuousSteer, -1, 1)
+      : (input.left ? -1 : 0) + (input.right ? 1 : 0);
     if (steerInput !== 0) {
       let speedFactor = clamp(Math.abs(vF) / 2.0, 0, 1);
       let turn = this.turnSpeed * speedFactor;
@@ -7702,6 +7758,7 @@ class Kart {
     } else {
       // Release drift -> boost if charged enough
       if (this.driftCharge >= TUNING.DRIFT_TIER1 && Math.abs(vF) > 2) {
+        this.driftBoostCount = (this.driftBoostCount || 0) + 1;
         let boostTime = 0;
         let text = "";
         let color = "";
@@ -8695,6 +8752,7 @@ const game = {
   dragonTimer: 0,
   dragonFireTimer: 0,
   dragonWarnTimer: 0,
+  dragonEscape: null,
   bestLap: 0,
   p2pLastPickupSyncAt: 0,
   p2pLastHostSyncAt: 0,
@@ -9613,6 +9671,7 @@ function buildRace() {
   game.dragonTimer = 0;
   game.dragonFireTimer = 0;
   game.dragonWarnTimer = 60; // First warning after about 1 second
+  game.dragonEscape = null;
   game.p2pLastPickupSyncAt = 0;
   game.p2pLastHostSyncAt = 0;
   game.p2pLastGuestSyncAt = 0;
@@ -9744,6 +9803,10 @@ function buildRace() {
     game.totalRacers = 1 + game.ais.length;
   }
 
+  if (mapId === "dragon_escape") {
+    game.dragonEscape = createDragonEscapeEntity();
+  }
+
   // Camera centered on player
   game.cam.x = game.player.x;
   game.cam.y = game.player.y;
@@ -9836,12 +9899,17 @@ function finishRace() {
   Sound.stopAllDriftSqueals();
   Sound.stopAllRumbles();
 
-  // Build finish order from progress
+  // Build finish order from progress. Eliminated racers are ranked behind anyone still alive.
   const all = getActiveKarts();
-  const finished = game.finishOrder.slice(); // already in finish order
+  const finished = game.finishOrder.filter(k => k && !k.eliminated); // already in finish order
   const eliminated = all.filter(k => k.eliminated && !finished.includes(k));
   const unfinished = all.filter(k => !k.finished && !k.eliminated);
   unfinished.sort((a, b) => progressValue(b) - progressValue(a));
+  eliminated.sort((a, b) => {
+    const survivalDelta = (b.finishTime || 0) - (a.finishTime || 0);
+    if (Math.abs(survivalDelta) > 0.001) return survivalDelta;
+    return progressValue(b) - progressValue(a);
+  });
   for (const k of unfinished) finished.push(k);
   for (const k of eliminated) finished.push(k);
   game.finalRanking = finished;
@@ -9869,6 +9937,13 @@ function progressValue(k) {
 function rankAll() {
   const all = getActiveKarts();
   const sorted = all.slice().sort((a, b) => {
+    if (a.eliminated || b.eliminated) {
+      if (a.eliminated && !b.eliminated) return 1;
+      if (b.eliminated && !a.eliminated) return -1;
+      const survivalDelta = (b.finishTime || 0) - (a.finishTime || 0);
+      if (Math.abs(survivalDelta) > 0.001) return survivalDelta;
+      return progressValue(b) - progressValue(a);
+    }
     if (a.finished && !b.finished) return -1;
     if (b.finished && !a.finished) return 1;
     if (a.finished && b.finished) return a.finishTime - b.finishTime;
@@ -9951,7 +10026,8 @@ function checkProgress(kart) {
   const completingLapAtGoalLine = !open && checkpointIdx === 0 && kart.checkpointsThisLap >= checkpointCount - 1;
 
   if (completingLapAtGoalLine) {
-    hitCheckpoint = game.track.crossedStartLine(kart.progressPrevX, kart.progressPrevY, kart.x, kart.y);
+    hitCheckpoint = game.track.crossedStartLine(kart.progressPrevX, kart.progressPrevY, kart.x, kart.y)
+      || game.track.hitCheckpoint(checkpointIdx, kart.x, kart.y);
   } else if (game.track.hitCheckpoint(checkpointIdx, kart.x, kart.y)) {
     hitCheckpoint = true;
   } else if (open && !game.track.hasCustomCheckpoints) {
@@ -10746,15 +10822,19 @@ function update(dt, time) {
 
       // Dragon Fire spawning (host only)
       if (isDragonEscape() && !game.headlessNoHazards) {
+        const isDragonAuthority = !game.p2pMode || game.p2pRole === "host";
+        if (isDragonAuthority) {
+          updateDragonEscapeEntity(dt);
+        }
         const raceProgress = clamp(game.raceTime / 90, 0, 1);
         const lapProgress = clamp(game.raceTime / 150, 0, 1);
         const intensity = Math.max(raceProgress, lapProgress);
-        game.dragonWarnTimer -= dt;
-        if (game.dragonWarnTimer <= 0) {
+        if (isDragonAuthority) game.dragonWarnTimer -= dt;
+        if (isDragonAuthority && game.dragonWarnTimer <= 0) {
           game.dragonWarnTimer = (7 + Math.random() * 7) / (1 + intensity * 0.5);
-          const targets = activeKarts.filter(k => k.spinoutTimer <= 0 && !k.finished);
+          const targets = activeKarts.filter(k => k.spinoutTimer <= 0 && !k.finished && !k.eliminated);
           if (targets.length > 0) {
-            const target = pick(targets);
+            const target = getDragonTarget() || pick(targets);
             game.particles.add({ type: "text", text: "DRAGON FIRE!", x: target.x, y: target.y - 40,
               vx: 0, vy: -0.8, life: 50, maxLife: 50, size: 18, color: "#ff3a1f", drag: 0.96 });
             if (target.isPlayer) game.shake = Math.max(game.shake, 3);
@@ -10764,21 +10844,29 @@ function update(dt, time) {
             const spawnMin = lerp(1100, 550, intensity);
             const spawnMax = lerp(1700, 1000, intensity);
             const spread = 0.18 + intensity * 0.25;
+            const dragon = game.dragonEscape;
+            const originX = dragon ? dragon.x + Math.cos(dragon.heading) * 130 : target.x - rand(spawnMin, spawnMax);
+            const originY = dragon ? dragon.y + Math.sin(dragon.heading) * 130 : target.y + rand(-220, 220);
+            const fireFx = dragon ? Math.cos(dragon.heading) : 1;
+            const fireFy = dragon ? Math.sin(dragon.heading) : 0;
+            const fireLx = -fireFy;
+            const fireLy = fireFx;
             // Occasional "fire wall" at higher intensity: vertical curtain
             const isFireWall = intensity > 0.35 && Math.random() < intensity * 0.45;
             if (isFireWall) {
               const wallCount = 5 + Math.floor(intensity * 7); // 5–12
-              const wallTop = target.y - 280;
               for (let i = 0; i < wallCount; i++) {
-                const startY = wallTop + (i / (wallCount - 1)) * 560;
-                const startX = target.x - rand(spawnMin, spawnMax);
+                const off = -280 + (i / (wallCount - 1)) * 560;
+                const startX = originX + fireLx * off;
+                const startY = originY + fireLy * off;
                 const angle = Math.atan2(target.y - startY, target.x - startX) + rand(-0.08, 0.08);
                 game.hazards.push(new DragonFire(startX, startY, angle, fireSpeed));
               }
             } else {
               for (let i = 0; i < numFire; i++) {
-                const startY = target.y + rand(-220, 220);
-                const startX = target.x - rand(spawnMin, spawnMax);
+                const off = rand(-220, 220);
+                const startX = originX + fireLx * off - fireFx * rand(0, 90);
+                const startY = originY + fireLy * off - fireFy * rand(0, 90);
                 const angle = Math.atan2(target.y - startY, target.x - startX) + rand(-spread, spread);
                 game.hazards.push(new DragonFire(startX, startY, angle, fireSpeed));
               }
@@ -11085,13 +11173,15 @@ function drawWorld(pKart, left, top, width, height, time, isP2) {
 }
 
 function drawDragonHead(ctx, pKart, time) {
-  // Dragon pursues from the left edge, bobbing and menacing, now with full body
-  const headX = pKart.camX - VIEW_W / (2 * pKart.camScale) - 40;
-  const headY = pKart.camY - 60 + Math.sin(time * 0.0018) * 40 + Math.sin(time * 0.004) * 15;
+  // Dragon's Escape uses a shared world entity, not a per-camera decoration.
+  const dragon = game.dragonEscape;
+  if (!dragon || !dragon.active) return;
+  const headX = dragon.x;
+  const headY = dragon.y + Math.sin(time * 0.0018) * 34 + Math.sin(time * 0.004) * 12;
 
   ctx.save();
   ctx.translate(headX, headY);
-  // The dragon faces right (toward the player)
+  ctx.rotate(dragon.heading || 0);
 
   const headScale = clamp(1.0 - (pKart.camScale - 0.85) * 0.3, 0.65, 1.1);
   ctx.scale(headScale, headScale);
@@ -11420,6 +11510,8 @@ const THREE_STATE = {
   trackMesh: null,
   trackGroup: null,
   groundMesh: null,
+  skyMesh: null,
+  starField: null,
   kartModels: new Map(),
   itemMeshes: [],
   coinMeshes: [],
@@ -11816,7 +11908,9 @@ function init3DScene() {
   skyCtx.fillRect(0, 0, 1, 256);
   const skyTex = new T.CanvasTexture(skyCanvas);
   const skyMat = new T.MeshBasicMaterial({ map: skyTex, side: T.BackSide });
-  THREE_STATE.scene.add(new T.Mesh(skyGeo, skyMat));
+  const skyMesh = new T.Mesh(skyGeo, skyMat);
+  THREE_STATE.scene.add(skyMesh);
+  THREE_STATE.skyMesh = skyMesh;
 
   // Stars with size variation and color tints
   const starVerts = [];
@@ -11839,7 +11933,9 @@ function init3DScene() {
   starGeo.setAttribute("color", new T.Float32BufferAttribute(starColors, 3));
   starGeo.setAttribute("size", new T.Float32BufferAttribute(starSizes, 1));
   const starMat = new T.PointsMaterial({ size: 3.5, sizeAttenuation: false, transparent: true, opacity: 0.8, vertexColors: true });
-  THREE_STATE.scene.add(new T.Points(starGeo, starMat));
+  const starField = new T.Points(starGeo, starMat);
+  THREE_STATE.scene.add(starField);
+  THREE_STATE.starField = starField;
 
   // HUD overlay canvas
   if (hudCanvas) {
@@ -13630,58 +13726,88 @@ function animateDragonModel(model, wingPhase, jawPhase, enraged, time) {
 function syncDragons3D(time) {
   if (!THREE_STATE.scene) return;
   const dragon = game.track && game.track.regulatoryDragon;
+  const currentMapId = MAPS[game.selectedMapIdx || 0].id;
+  if (dragon && currentMapId !== "dragon_escape" && !THREE_STATE.dragonModel) {
+    THREE_STATE.dragonModel = buildDragonModel3D(false);
+    if (THREE_STATE.dragonModel) THREE_STATE.scene.add(THREE_STATE.dragonModel);
+  }
   if (THREE_STATE.dragonModel) {
-    THREE_STATE.dragonModel.visible = !!(dragon && dragon.active);
+    THREE_STATE.dragonModel.visible = !!(dragon && dragon.active && currentMapId !== "dragon_escape");
     if (dragon && dragon.active) {
-      const dragonHover = 20 + Math.sin(time * 0.002) * 10;
+      const dragonHover = 42 + Math.sin(time * 0.002) * 12;
       THREE_STATE.dragonModel.position.set(dragon.x, dragonHover, dragon.y);
-      THREE_STATE.dragonModel.rotation.y = -dragon.heading + Math.PI / 2;
-      const scale = dragon.enraged ? 1.35 : 1.2;
+      THREE_STATE.dragonModel.rotation.y = -dragon.heading;
+      const scale = dragon.enraged ? 1.55 : 1.35;
       THREE_STATE.dragonModel.scale.setScalar(scale);
       animateDragonModel(THREE_STATE.dragonModel, dragon.wingPhase || time * 0.004, dragon.jawPhase || time * 0.006, dragon.enraged, time);
     }
   }
 
-  if (THREE_STATE.dragonEscapeModel && game.player) {
-    const pKart = game.player;
-    const chaseX = pKart.x - 220 - clamp(game.raceTime * 9, 0, 600);
-    const bob = Math.sin(time * 0.002) * 30;
-    THREE_STATE.dragonEscapeModel.visible = MAPS[game.selectedMapIdx || 0].id === "dragon_escape";
-    THREE_STATE.dragonEscapeModel.position.set(chaseX, 0, pKart.y - 80 + bob);
-    THREE_STATE.dragonEscapeModel.rotation.y = Math.PI / 2 + Math.sin(time * 0.0015) * 0.2;
-    animateDragonModel(THREE_STATE.dragonEscapeModel, time * 0.007, time * 0.009, game.raceTime > 30, time);
+  if (currentMapId === "dragon_escape" && !THREE_STATE.dragonEscapeModel) {
+    THREE_STATE.dragonEscapeModel = buildDragonModel3D(true);
+    if (THREE_STATE.dragonEscapeModel) THREE_STATE.scene.add(THREE_STATE.dragonEscapeModel);
   }
+  if (THREE_STATE.dragonEscapeModel) {
+    const escapeDragon = game.dragonEscape;
+    THREE_STATE.dragonEscapeModel.visible = !!(escapeDragon && escapeDragon.active && currentMapId === "dragon_escape");
+    if (escapeDragon && escapeDragon.active) {
+      const bob = Math.sin(time * 0.002) * 30;
+      THREE_STATE.dragonEscapeModel.position.set(escapeDragon.x, 16 + bob, escapeDragon.y);
+      THREE_STATE.dragonEscapeModel.rotation.y = -escapeDragon.heading;
+      animateDragonModel(
+        THREE_STATE.dragonEscapeModel,
+        escapeDragon.wingPhase || time * 0.007,
+        escapeDragon.jawPhase || time * 0.009,
+        escapeDragon.enraged,
+        time
+      );
+    }
+  }
+}
+
+function sync3DFirmamentToCamera() {
+  if (!THREE_STATE.camera) return;
+  if (THREE_STATE.skyMesh) THREE_STATE.skyMesh.position.copy(THREE_STATE.camera.position);
+  if (THREE_STATE.starField) THREE_STATE.starField.position.copy(THREE_STATE.camera.position);
 }
 
 function setCameraForKart(kart, time) {
   if (!kart) return;
   const fx = Math.cos(kart.heading), fy = Math.sin(kart.heading);
   const sp = kart.speed();
-  const camDist = 140 + sp * 8;
-  const camHeight = 70 + sp * 5;
-  const lookAhead = 60 + sp * 15;
+  const mapId = MAPS[game.selectedMapIdx || 0].id;
+  const isDragonChaseView = !!(
+    (game.track?.regulatoryDragon?.active && mapId === "regulatory_dragon_run") ||
+    (game.dragonEscape?.active && mapId === "dragon_escape")
+  );
+  const camDist = 140 + sp * 8 + (isDragonChaseView ? 95 : 0);
+  const camHeight = 70 + sp * 5 + (isDragonChaseView ? 16 : 0);
+  const lookAhead = 60 + sp * 15 + (isDragonChaseView ? 22 : 0);
 
   const targetX = kart.x - fx * camDist;
   const targetZ = kart.y - fy * camDist;
+  const targetCamHeight = camHeight;
   const lookX = kart.x + fx * lookAhead;
   const lookZ = kart.y + fy * lookAhead;
+  const lookY = isDragonChaseView ? 15 : 12;
 
   const cs = THREE_STATE.camSmooth;
   const sm = 0.06;
   cs.x += (targetX - cs.x) * sm;
-  cs.y += (camHeight - cs.y) * sm;
+  cs.y += (targetCamHeight - cs.y) * sm;
   cs.z += (targetZ - cs.z) * sm;
   cs.lx += (lookX - cs.lx) * sm;
-  cs.ly += (12 - cs.ly) * sm;
+  cs.ly += (lookY - cs.ly) * sm;
   cs.lz += (lookZ - cs.lz) * sm;
 
   const shake = game.shake || 0;
   THREE_STATE.camera.position.set(cs.x + (Math.random() - 0.5) * shake * 1.5, cs.y + (Math.random() - 0.5) * shake * 1.5, cs.z);
   THREE_STATE.camera.lookAt(cs.lx, cs.ly, cs.lz);
 
-  const targetFov = 70 + sp * 4 + (kart.boostTimer > 0 ? 10 : 0);
+  const targetFov = 70 + sp * 4 + (kart.boostTimer > 0 ? 10 : 0) + (isDragonChaseView ? 4 : 0);
   THREE_STATE.camera.fov += (targetFov - THREE_STATE.camera.fov) * 0.05;
   THREE_STATE.camera.updateProjectionMatrix();
+  sync3DFirmamentToCamera();
 }
 
 /* ============================================================
@@ -13757,18 +13883,26 @@ function sync3DNameTags(time) {
       continue;
     }
     let sprite = THREE_STATE.nameTagSprites.get(kart);
+    if (sprite && sprite._nameTagVersion !== 2) {
+      THREE_STATE.scene.remove(sprite);
+      sprite.material.map?.dispose();
+      sprite.material.dispose();
+      THREE_STATE.nameTagSprites.delete(kart);
+      sprite = null;
+    }
     if (!sprite) {
       sprite = makeTextSprite(kart.name, {
-        fontSize: 22,
+        fontSize: 33,
         color: kart.color,
         bgColor: "rgba(6, 5, 20, 0.75)",
         borderColor: kart.color,
-        padding: 8,
+        padding: 10,
       });
+      sprite._nameTagVersion = 2;
       THREE_STATE.scene.add(sprite);
       THREE_STATE.nameTagSprites.set(kart, sprite);
     }
-    sprite.position.set(kart.x, 28, kart.y);
+    sprite.position.set(kart.x, 34, kart.y);
     const isUlt = kart.ultActiveTimer > 0;
     sprite.material.opacity = isUlt ? 0.6 + 0.3 * Math.sin(time * 0.02) : 0.85;
   }
@@ -16278,6 +16412,16 @@ function serializeDragonState(dragon) {
 
 function applyDragonState(state) {
   const dragon = game.track && game.track.regulatoryDragon;
+  applyDragonObjectState(dragon, state);
+}
+
+function applyDragonEscapeState(state) {
+  if (!state) return;
+  if (!game.dragonEscape) game.dragonEscape = createDragonEscapeEntity();
+  applyDragonObjectState(game.dragonEscape, state);
+}
+
+function applyDragonObjectState(dragon, state) {
   if (!dragon || !state) return;
   dragon.x = state.x;
   dragon.y = state.y;
@@ -16364,6 +16508,7 @@ function sendHostSync() {
     rt: game.raceTime,
     gs: game.state,
     dr: serializeDragonState(game.track && game.track.regulatoryDragon),
+    de: serializeDragonState(game.dragonEscape),
     pl: (game.p2pPlayers || []).map(p => ({
       id: p.id,
       s: serializeKartCompact(getKartById(p.id))
@@ -16574,6 +16719,7 @@ function handleP2pData(data, sourceConn = null) {
     }
     if ((data.rt ?? data.raceTime) !== undefined) game.raceTime = data.rt ?? data.raceTime;
     if (data.dr ?? data.dragon) applyDragonState(data.dr ?? data.dragon);
+    if (data.de ?? data.dragonEscape) applyDragonEscapeState(data.de ?? data.dragonEscape);
 
     const players = data.pl ?? data.players;
     if (players) {
@@ -16813,8 +16959,6 @@ const HEADLESS_OBS_KEYS = [
   "driftCharge",
   "boostActive",
   "spinout",
-  "throttleLock",
-  "amended",
   "nextHeadingError",
   "nextTargetDistance",
   "carMaxSpeed",
@@ -16851,8 +16995,13 @@ const HEADLESS_DQN_ACTIONS = [
   { name: "hard_right", steer: 1, throttle: 1, brake: 0, drift: false },
   { name: "drift_left", steer: -1, throttle: 1, brake: 0, drift: true },
   { name: "drift_right", steer: 1, throttle: 1, brake: 0, drift: true },
-  { name: "brake", steer: 0, throttle: 0, brake: 1, drift: false },
+  { name: "soft_drift_left", steer: -0.45, throttle: 1, brake: 0, drift: true },
+  { name: "soft_drift_right", steer: 0.45, throttle: 1, brake: 0, drift: true },
+  { name: "brake_left", steer: -0.6, throttle: 0, brake: 1, drift: false },
+  { name: "brake_right", steer: 0.6, throttle: 0, brake: 1, drift: false },
   { name: "use_item", steer: 0, throttle: 1, brake: 0, drift: false, item: true },
+  { name: "item_left", steer: -0.45, throttle: 1, brake: 0, drift: false, item: true },
+  { name: "item_right", steer: 0.45, throttle: 1, brake: 0, drift: false, item: true },
   { name: "use_ultimate", steer: 0, throttle: 1, brake: 0, drift: false, ultimate: true },
 ];
 
@@ -16947,8 +17096,6 @@ function getHeadlessObservation(kart) {
     clamp((kart.driftCharge || 0) / TUNING.DRIFT_TIER3, 0, 2),
     kart.boostTimer > 0 ? 1 : 0,
     kart.spinoutTimer > 0 ? 1 : 0,
-    kart.throttleLockTimer > 0 ? 1 : 0,
-    kart.amendmentTimer > 0 ? 1 : 0,
     clamp(angleDiff(kart.heading, nextTargetAngle) / Math.PI, -1, 1),
     clamp(Math.hypot(ndx, ndy) / 1600, 0, 3),
     clamp((kart.baseMaxSpeed || kart.maxSpeed || 0) / 8.0, 0, 2),
@@ -16998,6 +17145,7 @@ function applyHeadlessAction(kart, track, dt, action) {
     left: a.steer < -0.15,
     right: a.steer > 0.15,
     drift: a.drift,
+    continuousSteer: a.steer,
   };
   if (kart.ultActiveTimer > 0) kart.ultActiveTimer -= dt;
   const onRoad = track.isOnRoad(kart.x, kart.y);
@@ -17005,24 +17153,73 @@ function applyHeadlessAction(kart, track, dt, action) {
   kart.lastHeadlessAction = a;
 }
 
+function _mlpLayerForward(x, layer) {
+  const w = layer.weights || layer.w || [];
+  const b = layer.biases || layer.b || [];
+  const outSize = b.length || Math.floor(w.length / Math.max(1, x.length));
+  const next = new Array(outSize).fill(0);
+  for (let o = 0; o < outSize; o++) {
+    let sum = Number(b[o] || 0);
+    for (let i = 0; i < x.length; i++) {
+      sum += Number(w[o * x.length + i] || 0) * x[i];
+    }
+    next[o] = sum;
+  }
+  if (layer.layernorm) {
+    const ln = layer.layernorm;
+    const eps = ln.eps || 1e-5;
+    let mean = 0;
+    for (let i = 0; i < outSize; i++) mean += next[i];
+    mean /= outSize;
+    let variance = 0;
+    for (let i = 0; i < outSize; i++) variance += (next[i] - mean) * (next[i] - mean);
+    variance /= outSize;
+    const invStd = 1 / Math.sqrt(variance + eps);
+    for (let i = 0; i < outSize; i++) {
+      next[i] = (next[i] - mean) * invStd * (ln.weight?.[i] ?? 1) + (ln.bias?.[i] ?? 0);
+    }
+  }
+  const act = layer.activation;
+  if (act === "linear") return next;
+  for (let o = 0; o < outSize; o++) {
+    if (act === "relu") next[o] = Math.max(0, next[o]);
+    else if (act === "gelu") {
+      const v = next[o];
+      next[o] = 0.5 * v * (1 + Math.tanh(Math.sqrt(2 / Math.PI) * (v + 0.044715 * v * v * v)));
+    }
+    else next[o] = Math.tanh(next[o]);
+  }
+  return next;
+}
+
 function headlessMlpForward(weights, inputValues) {
-  if (!weights || !Array.isArray(weights.layers)) return null;
+  if (!weights) return null;
   let x = inputValues.slice();
+  if (weights.architecture === "gaussian_actor" && Array.isArray(weights.trunk)) {
+    for (const layer of weights.trunk) x = _mlpLayerForward(x, layer);
+    const mean = _mlpLayerForward(x, weights.mean_head);
+    const action = new Array(mean.length);
+    action[0] = Math.tanh(mean[0]);
+    for (let i = 1; i < mean.length; i++) action[i] = 1 / (1 + Math.exp(-mean[i]));
+    return action;
+  }
+  if (weights.architecture === "dueling" && Array.isArray(weights.trunk)) {
+    for (const layer of weights.trunk) x = _mlpLayerForward(x, layer);
+    const v = _mlpLayerForward(x, weights.value_head);
+    const a = _mlpLayerForward(x, weights.advantage_head);
+    let meanA = 0;
+    for (let i = 0; i < a.length; i++) meanA += a[i];
+    meanA /= a.length || 1;
+    const q = new Array(a.length);
+    for (let i = 0; i < a.length; i++) q[i] = v[0] + a[i] - meanA;
+    return q;
+  }
+  if (!Array.isArray(weights.layers)) return null;
   for (let li = 0; li < weights.layers.length; li++) {
     const layer = weights.layers[li];
-    const w = layer.weights || layer.w || [];
-    const b = layer.biases || layer.b || [];
-    const outSize = b.length || Math.floor(w.length / Math.max(1, x.length));
-    const next = new Array(outSize).fill(0);
-    for (let o = 0; o < outSize; o++) {
-      let sum = Number(b[o] || 0);
-      for (let i = 0; i < x.length; i++) {
-        sum += Number(w[o * x.length + i] || 0) * x[i];
-      }
-      const isLast = li === weights.layers.length - 1;
-      next[o] = isLast && layer.activation === "linear" ? sum : Math.tanh(sum);
-    }
-    x = next;
+    const isLast = li === weights.layers.length - 1;
+    const patched = isLast ? { ...layer, activation: layer.activation || "linear" } : layer;
+    x = _mlpLayerForward(x, patched);
   }
   return x;
 }
@@ -17068,44 +17265,83 @@ function buildModelObservationValues(weights, observation, kart = null) {
 function runHeadlessDqn(weights, observation, kart = null) {
   const values = buildModelObservationValues(weights, observation, kart);
   const qValues = headlessMlpForward(weights, values);
-  if (!qValues || !qValues.length) return { actionIndex: 0, action: HEADLESS_DQN_ACTIONS[0], qValues: [] };
+  const actionSchema = Array.isArray(weights?.actions) && weights.actions.length ? weights.actions : HEADLESS_DQN_ACTIONS;
+  if (!qValues || !qValues.length) return { actionIndex: 0, action: actionSchema[0] || HEADLESS_DQN_ACTIONS[0], qValues: [] };
   let bestIdx = 0;
-  for (let i = 1; i < Math.min(qValues.length, HEADLESS_DQN_ACTIONS.length); i++) {
+  for (let i = 1; i < Math.min(qValues.length, actionSchema.length); i++) {
     if (qValues[i] > qValues[bestIdx]) bestIdx = i;
   }
-  return { actionIndex: bestIdx, action: HEADLESS_DQN_ACTIONS[bestIdx], qValues };
+  return { actionIndex: bestIdx, action: actionSchema[bestIdx] || HEADLESS_DQN_ACTIONS[0], qValues };
+}
+
+function runHeadlessSac(weights, observation, kart = null) {
+  const values = buildModelObservationValues(weights, observation, kart);
+  const raw = headlessMlpForward(weights, values);
+  if (!raw || !raw.length) return { action: { steer: 0, throttle: 1, brake: 0, drift: false, item: false, ultimate: false }, raw: [] };
+  return {
+    action: {
+      steer: raw[0] || 0,
+      throttle: raw[1] !== undefined ? raw[1] : 1,
+      brake: raw[2] || 0,
+      drift: (raw[3] || 0) > 0.5,
+      item: (raw[4] || 0) > 0.5,
+      ultimate: (raw[5] || 0) > 0.5,
+    },
+    raw,
+  };
+}
+
+function validateModelPayload(payload) {
+  if (!payload || !payload.type) throw new Error("Not a TurboKart model");
+  if (payload.type === "sac") return validateSacModelPayload(payload);
+  return validateDqnModelPayload(payload);
+}
+
+function validateSacModelPayload(payload) {
+  if (payload.type !== "sac") throw new Error("Expected a TurboKart SAC model");
+  if (!Array.isArray(payload.trunk) || !payload.mean_head) throw new Error("SAC model missing trunk or mean_head");
+  if (!Array.isArray(payload.observationKeys)) throw new Error("Model has no observation key schema");
+  for (const key of payload.observationKeys) {
+    const baseKey = String(key).replace(/@-\d+$/, "");
+    if (!HEADLESS_OBS_KEYS.includes(baseKey)) {
+      console.warn(`Model references removed observation key "${key}" — will use 0`);
+    }
+  }
+  return payload;
 }
 
 function validateDqnModelPayload(payload) {
   if (!payload || payload.type !== "dqn") throw new Error("Expected a TurboKart DQN model");
-  if (!Array.isArray(payload.layers) || payload.layers.length === 0) throw new Error("Model has no layers");
+  const isDueling = payload.architecture === "dueling" && Array.isArray(payload.trunk);
+  if (!isDueling && (!Array.isArray(payload.layers) || payload.layers.length === 0)) throw new Error("Model has no layers");
+  if (isDueling && (!payload.value_head || !payload.advantage_head)) throw new Error("Dueling model missing value/advantage heads");
   if (!Array.isArray(payload.observationKeys)) throw new Error("Model has no observation key schema");
   for (const key of payload.observationKeys) {
     const baseKey = String(key).replace(/@-\d+$/, "");
-    if (!HEADLESS_OBS_KEYS.includes(baseKey)) throw new Error(`Unknown model observation key: ${key}`);
+    if (!HEADLESS_OBS_KEYS.includes(baseKey)) {
+      console.warn(`Model references removed observation key "${key}" — will use 0`);
+    }
   }
-  if (!Array.isArray(payload.actions) || payload.actions.length > HEADLESS_DQN_ACTIONS.length) {
+  if (!Array.isArray(payload.actions) || payload.actions.length === 0) {
     throw new Error("Model action schema does not match this game build");
   }
-  for (let i = 0; i < payload.actions.length; i++) {
-    if (payload.actions[i]?.name && payload.actions[i].name !== HEADLESS_DQN_ACTIONS[i].name) {
-      throw new Error(`Model action mismatch at ${i}: ${payload.actions[i].name} != ${HEADLESS_DQN_ACTIONS[i].name}`);
-    }
+  function _checkLayer(label, layer, expectedIn) {
+    const w = layer.weights || layer.w;
+    const b = layer.biases || layer.b;
+    if (!Array.isArray(w) || !Array.isArray(b) || b.length === 0) throw new Error(`${label} missing weights/biases`);
+    if (expectedIn !== null && w.length !== expectedIn * b.length) throw new Error(`${label} shape mismatch`);
+    return b.length;
   }
   let inputSize = payload.observationKeys.length;
-  for (let i = 0; i < payload.layers.length; i++) {
-    const layer = payload.layers[i];
-    const weights = layer.weights || layer.w;
-    const biases = layer.biases || layer.b;
-    if (!Array.isArray(weights) || !Array.isArray(biases) || biases.length === 0) {
-      throw new Error(`Layer ${i} is missing weights or biases`);
-    }
-    if (weights.length !== inputSize * biases.length) {
-      throw new Error(`Layer ${i} shape mismatch`);
-    }
-    inputSize = biases.length;
+  if (isDueling) {
+    for (let i = 0; i < payload.trunk.length; i++) inputSize = _checkLayer(`Trunk[${i}]`, payload.trunk[i], inputSize);
+    _checkLayer("value_head", payload.value_head, inputSize);
+    const advOut = _checkLayer("advantage_head", payload.advantage_head, inputSize);
+    if (advOut !== payload.actions.length) throw new Error("Advantage head output size must match action count");
+  } else {
+    for (let i = 0; i < payload.layers.length; i++) inputSize = _checkLayer(`Layer ${i}`, payload.layers[i], inputSize);
+    if (inputSize !== payload.actions.length) throw new Error("Model output size must match its action count");
   }
-  if (inputSize !== payload.actions.length) throw new Error("Model output size must match its action count");
   return payload;
 }
 
@@ -17221,10 +17457,11 @@ function enableHeadlessAgent(agentType) {
   return ["random", "mlp", "dqn", "external"].includes(type) ? type : "waypoint";
 }
 
-class DqnAIKart extends Kart {
+class TrainedAIKart extends Kart {
   constructor(x, y, heading, char, weights, skill = 1.0) {
     super(x, y, heading, char, false);
     this.weights = weights;
+    this.isSac = weights?.type === "sac";
     this.skill = skill;
     this.maxSpeed = this.baseMaxSpeed * (0.91 + skill * 0.1);
     this.acceleration = char.acceleration * (0.92 + skill * 0.08);
@@ -17232,7 +17469,7 @@ class DqnAIKart extends Kart {
     this.aiTargetIdx = 1;
     this.frameSkip = Math.max(1, Math.floor(Number(weights?.meta?.frameSkip) || 1));
     this.skipCounter = 0;
-    this.cachedAction = HEADLESS_DQN_ACTIONS[0];
+    this.cachedAction = this.isSac ? { steer: 0, throttle: 1, brake: 0, drift: false, item: false, ultimate: false } : HEADLESS_DQN_ACTIONS[0];
   }
 
   update(dt, track) {
@@ -17241,8 +17478,13 @@ class DqnAIKart extends Kart {
     if (this.skipCounter <= 0) {
       this.skipCounter = this.frameSkip;
       const observation = getHeadlessObservation(this);
-      const decision = runHeadlessDqn(this.weights, observation, this);
-      this.cachedAction = decision.action;
+      if (this.isSac) {
+        const decision = runHeadlessSac(this.weights, observation, this);
+        this.cachedAction = decision.action;
+      } else {
+        const decision = runHeadlessDqn(this.weights, observation, this);
+        this.cachedAction = decision.action;
+      }
     }
     applyHeadlessAction(this, track, dt, this.cachedAction);
     const target = getPolicyCheckpointCenter(this);
@@ -17254,6 +17496,7 @@ class DqnAIKart extends Kart {
     }
   }
 }
+const DqnAIKart = TrainedAIKart;
 
 function applySelectedAiModelToOpponents() {
   if (selectedAiModelId === "classic" || !selectedAiModelWeights || !game.ais || !game.ais.length) return;
@@ -17380,7 +17623,7 @@ async function refreshAiModelSelector() {
 }
 
 function importAiModelPayload(payload, fileName = "imported-model.json") {
-  validateDqnModelPayload(payload);
+  validateModelPayload(payload);
   const meta = payload.meta || {};
   const idBase = meta.id || fileName.replace(/\.json$/i, "") || "imported-dqn";
   const id = `imported:${idBase}`;
@@ -17423,7 +17666,7 @@ async function loadSelectedAiModel() {
   if (aiModelStatus) aiModelStatus.textContent = "Loading model...";
   const response = await fetch(path, { cache: "no-store" });
   if (!response.ok) throw new Error(`Failed to load AI model: ${response.status}`);
-  model._weights = validateDqnModelPayload(await response.json());
+  model._weights = validateModelPayload(await response.json());
   selectedAiModelWeights = model._weights;
   if (aiModelStatus) aiModelStatus.textContent = `Loaded ${model.name || model.id || path}`;
   return selectedAiModelWeights;
@@ -17445,13 +17688,15 @@ function configureHeadlessEpisode(config) {
     game.track.regulatoryDragon = null;
   }
   if (!config.solo && Array.isArray(config.opponentModels) && config.opponentModels.length && game.ais?.length) {
+    const classicSlots = Math.max(0, Math.floor(Number(config.classicOpponentSlots || 0)));
     game.ais = game.ais.map((ai, idx) => {
-      const weights = config.opponentModels[idx % config.opponentModels.length];
+      if (idx < classicSlots) return ai;
+      const weights = config.opponentModels[(idx - classicSlots) % config.opponentModels.length];
       if (!weights) return ai;
       try {
-        validateDqnModelPayload(weights);
+        validateModelPayload(weights);
         const char = CHARACTERS.find(c => c.id === ai.charId) || CHARACTERS[(idx + 1) % CHARACTERS.length];
-        const dqn = new DqnAIKart(ai.x, ai.y, ai.heading, char, weights, ai.skill || 0.96);
+        const dqn = new TrainedAIKart(ai.x, ai.y, ai.heading, char, weights, ai.skill || 0.96);
         dqn.lateralOffset = ai.lateralOffset || 0;
         return dqn;
       } catch (e) {
@@ -17496,10 +17741,8 @@ function summarizeHeadlessEpisode(map, frames, simSeconds, episodeIdx = 0) {
 function computeHeadlessFrameReward(kart, beforeProgress, beforeLap, beforeFinished) {
   const afterProgress = progressValue(kart);
   let reward = (afterProgress - beforeProgress) * 10;
-  if ((kart.lap || 0) > beforeLap) reward += 25;
-  if (!beforeFinished && kart.finished) reward += 100;
-  if (!game.track.isOnRoad(kart.x, kart.y)) reward -= 0.02;
-  if (kart.spinoutTimer > 0) reward -= 0.04;
+  if ((kart.lap || 0) > beforeLap) reward += 50;
+  if (!beforeFinished && kart.finished) reward += 200;
   return reward;
 }
 
@@ -17631,8 +17874,8 @@ async function loadHeadlessPolicyModel() {
   const response = await fetch(modelUrl);
   if (!response.ok) throw new Error(`Failed to load policy model: ${response.status}`);
   const model = await response.json();
-  if (model.type === "dqn") validateDqnModelPayload(model);
-  if (model.type === "dqn") window.HEADLESS_DQN_WEIGHTS = model;
+  validateModelPayload(model);
+  if (model.type === "dqn" || model.type === "sac") window.HEADLESS_DQN_WEIGHTS = model;
   else window.HEADLESS_MLP_WEIGHTS = model;
   return model;
 }
@@ -17680,9 +17923,21 @@ function setupExternalRlApi() {
   window.rlStep = (action) => {
     const config = HEADLESS_EXTERNAL_STATE.config || makeHeadlessConfig({ agent: "external" });
     if (!HEADLESS_EXTERNAL_STATE.config) window.rlReset(config);
-    const actionObj = typeof action === "number"
-      ? HEADLESS_DQN_ACTIONS[Math.max(0, Math.min(HEADLESS_DQN_ACTIONS.length - 1, Math.floor(action)))]
-      : action;
+    let actionObj;
+    if (typeof action === "number") {
+      actionObj = HEADLESS_DQN_ACTIONS[Math.max(0, Math.min(HEADLESS_DQN_ACTIONS.length - 1, Math.floor(action)))];
+    } else if (Array.isArray(action)) {
+      actionObj = {
+        steer: action[0] || 0,
+        throttle: action[1] !== undefined ? action[1] : 1,
+        brake: action[2] || 0,
+        drift: (action[3] || 0) > 0.5,
+        item: (action[4] || 0) > 0.5,
+        ultimate: (action[5] || 0) > 0.5,
+      };
+    } else {
+      actionObj = action;
+    }
     if (game.player instanceof HeadlessExternalKart) game.player.pendingAction = actionObj;
     let reward = 0;
     const repeat = Math.max(1, Math.floor(config.frameSkip || 1));
@@ -17720,6 +17975,10 @@ function setupExternalRlApi() {
         lap: game.player.lap,
         finished: !!game.player.finished,
         totalReward: HEADLESS_EXTERNAL_STATE.reward,
+        coins: game.player.coinsCollected || 0,
+        itemUses: game.player.itemUseCount || 0,
+        ultUses: game.player.ultUseCount || 0,
+        driftBoosts: game.player.driftBoostCount || 0,
       },
     };
   };

@@ -102,44 +102,60 @@ Since the game is contained entirely in a single file (`index.html`), you can ru
 
 Trained AI opponents are loaded from `models/manifest.json`. On GitHub Pages or a local HTTP server they appear automatically in the **AI Opponents** selector. If you open `index.html` directly with double-click, use **Import JSON** and select a model file manually.
 
-Train a simple driving model:
+**Quick start** — the defaults are tuned for a strong generalist agent:
 
 ```bash
-uv run train_dqn.py \
-  --steps 100000 \
-  --frames 7200 \
-  --episodes-eval 5 \
-  --eval-every 10000 \
-  --out models/dqn-core.json \
-  --model-id dqn-core \
-  --model-name "DQN Core"
+uv run train_dqn.py --random-map --random-character --with-opponents --with-items --self-play
 ```
 
-Train a harder self-play/items run:
+This trains for 300k steps across all 5 non-dragon maps with frame-stack 4 and frame-skip 6 (10 actions/sec). The current DQN defaults use the 15-action policy, pruned 216-feature observation stack, hidden width 64, Tanh activations, and orthogonal initialization. It evaluates solo and vs classic waypoint AI, prints SmoothGrad attribution plus action distribution, and saves checkpoints to `models/checkpoints/`.
+
+**Full flags** for a named run:
 
 ```bash
 uv run train_dqn.py \
   --steps 300000 \
-  --frames 7200 \
-  --episodes-eval 3 \
-  --reference-episodes 2 \
-  --eval-every 25000 \
   --random-map \
-  --maps core_mainframe,audit_super_ring,compliance_chicane,black_ice_data_vault,protocol_amendment_labyrinth \
-  --eval-maps core_mainframe,audit_super_ring,compliance_chicane,black_ice_data_vault,protocol_amendment_labyrinth \
   --random-character \
-  --frame-stack 2 \
+  --frame-stack 4 \
+  --frame-skip 6 \
+  --hidden 64 \
+  --activation tanh \
+  --orthogonal-init \
   --with-opponents \
   --with-items \
   --self-play \
-  --league-limit 16 \
-  --classic-opponent-prob 0.25 \
-  --out models/dqn-selfplay-items-stack2.json \
-  --model-id dqn-selfplay-items-stack2 \
-  --model-name "DQN Self Play Items Stack 2"
+  --out models/dqn-my-agent.json \
+  --model-id dqn-my-agent \
+  --model-name "My Agent"
 ```
 
-The trainer prints model performance next to the classic waypoint AI reference. Intermediate checkpoints are saved locally to `models/checkpoints/` and ignored by Git; only the final `--out` model is added to the model manifest.
+**Evaluate trained models** across maps with a leaderboard and ghost-path HTML report:
+
+```bash
+uv run eval_models.py --models all --html-report ghost_eval.html
+```
+
+Run randomized head-to-head races between two trained models:
+
+```bash
+uv run eval_head_to_head.py \
+  --model-a dqn-dueling-pruned-300k \
+  --model-b dqn-15act-h64-tanh-ortho-300k \
+  --episodes 20
+```
+
+Head-to-head eval runs each matchup in both directions: model A as the player against model B opponents, then model B as the player against model A opponents. By default it keeps one classic waypoint AI in the opponent pack (`--classic-opponents 1`) so both models also face a baseline racer; use `--classic-opponents 0` for pure model-vs-model opponents. The report includes win rate, finish rate, reward, place, laps, citations, item uses, ultimate uses, and drift boosts.
+
+The trainer prints model performance next to the classic waypoint AI reference with per-track solo/classic/win-rate splits, SmoothGrad input attribution, action distribution, gameplay counters, and character win distributions. Checkpoints are saved to `models/checkpoints/` and added to the manifest so future self-play runs can sample them as opponents.
+
+**Key training findings:**
+* Frame-skip 6 (10 actions/sec) was the single biggest improvement over frame-skip 1.
+* Frame-stack 4 helps the model sense velocity and trajectory from observation history.
+* The best current DQN variant uses 15 actions, hidden width 64, Tanh activations, and orthogonal initialization.
+* The model primarily attends to heading error, target distance, and item status (hotfix/fasttrack).
+* It learns to use drift and items strategically over ~150k steps.
+* Protocol Amendment Labyrinth remains the hardest track due to split-lane checkpoints.
 
 Future improvement idea: use behavior cloning from waypoint traces, then fine-tune with PPO or SAC for smoother steering and drift timing. DQN is intentionally the simple debug baseline.
 

@@ -6,13 +6,12 @@
 #   "torch>=2.2",
 # ]
 # ///
-"""Train a tiny DQN policy for Turbo Kart Dash.
+"""Train a Dueling Double DQN policy for Turbo Kart Dash.
 
 Run with uv:
-  uv run train_dqn.py --steps 50000 --episodes-eval 20 --out dqn_model.json
+  uv run train_dqn.py --random-map --random-character --with-opponents --with-items --self-play
 
-The exported JSON can be injected into the game as window.HEADLESS_DQN_WEIGHTS
-and used by the headless/browser policy hook with agent=dqn.
+The exported JSON loads in-browser and is used by DqnAIKart for AI opponents.
 """
 
 from __future__ import annotations
@@ -30,6 +29,7 @@ from pathlib import Path
 from typing import Any
 
 import numpy as np
+import rl_common as common
 import torch
 from playwright.sync_api import Error as PlaywrightError
 from playwright.sync_api import Page, sync_playwright
@@ -69,18 +69,55 @@ class ReplayBuffer:
 
 
 class DQN(torch.nn.Module):
-    def __init__(self, obs_dim: int, action_dim: int, hidden: int = 128):
+    """Dueling DQN: shared trunk → separate value and advantage streams."""
+
+    def __init__(
+        self,
+        obs_dim: int,
+        action_dim: int,
+        hidden: int = 128,
+        activation: str = "tanh",
+        layer_norm: bool = False,
+        orthogonal_init: bool = False,
+    ):
         super().__init__()
-        self.net = torch.nn.Sequential(
-            torch.nn.Linear(obs_dim, hidden),
-            torch.nn.Tanh(),
-            torch.nn.Linear(hidden, hidden),
-            torch.nn.Tanh(),
-            torch.nn.Linear(hidden, action_dim),
-        )
+        activation = activation.lower()
+        if activation not in {"tanh", "gelu", "relu"}:
+            raise ValueError(f"Unsupported activation: {activation}")
+        self.activation_name = activation
+        self.layer_norm_enabled = layer_norm
+        layers: list[torch.nn.Module] = []
+        in_dim = obs_dim
+        for _ in range(2):
+            layers.append(torch.nn.Linear(in_dim, hidden))
+            if layer_norm:
+                layers.append(torch.nn.LayerNorm(hidden))
+            if activation == "gelu":
+                layers.append(torch.nn.GELU())
+            elif activation == "relu":
+                layers.append(torch.nn.ReLU())
+            else:
+                layers.append(torch.nn.Tanh())
+            in_dim = hidden
+        self.trunk = torch.nn.Sequential(*layers)
+        self.value_head = torch.nn.Linear(hidden, 1)
+        self.advantage_head = torch.nn.Linear(hidden, action_dim)
+        if orthogonal_init:
+            self._init_weights()
+
+    def _init_weights(self):
+        for m in self.modules():
+            if isinstance(m, torch.nn.Linear):
+                torch.nn.init.orthogonal_(m.weight, gain=math.sqrt(2))
+                torch.nn.init.zeros_(m.bias)
+        torch.nn.init.orthogonal_(self.value_head.weight, gain=1.0)
+        torch.nn.init.orthogonal_(self.advantage_head.weight, gain=0.01)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        return self.net(x)
+        h = self.trunk(x)
+        v = self.value_head(h)
+        a = self.advantage_head(h)
+        return v + a - a.mean(dim=-1, keepdim=True)
 
 
 class TurboKartEnv:
@@ -120,8 +157,12 @@ class TurboKartEnv:
         self.frame_skip = max(1, int(frame_skip))
         self.opponent_models = opponent_models or []
         self.obs_keys: list[str] = []
+        self._base_keys: list[str] = []
         self.actions: list[dict[str, Any]] = []
         self._frames: deque[np.ndarray] = deque(maxlen=self.frame_stack)
+
+    _SHALLOW_STACK_PREFIXES = ("kartRay", "hazardRay", "pickupRay", "boosterRay")
+    _SHALLOW_STACK_MAX_LAG = 0
 
     def _stack_keys(self, keys: list[str]) -> list[str]:
         if self.frame_stack <= 1:
@@ -129,7 +170,12 @@ class TurboKartEnv:
         stacked = []
         for lag in range(self.frame_stack):
             suffix = "" if lag == 0 else f"@-{lag}"
-            stacked.extend(f"{key}{suffix}" for key in keys)
+            for key in keys:
+                if lag > self._SHALLOW_STACK_MAX_LAG and any(
+                    key.startswith(p) for p in self._SHALLOW_STACK_PREFIXES
+                ):
+                    continue
+                stacked.append(f"{key}{suffix}")
         return stacked
 
     def _stack_obs(self, obs: np.ndarray, reset: bool = False) -> np.ndarray:
@@ -143,7 +189,25 @@ class TurboKartEnv:
                 self._frames.append(obs.copy())
         if self.frame_stack <= 1:
             return obs
-        return np.concatenate(list(self._frames)).astype(np.float32)
+        if not hasattr(self, "_stack_mask"):
+            self._build_stack_mask()
+        full = np.concatenate(list(self._frames)).astype(np.float32)
+        return full[self._stack_mask] if self._stack_mask is not None else full
+
+    def _build_stack_mask(self) -> None:
+        if self.frame_stack <= 1 or not self._base_keys:
+            self._stack_mask = None
+            return
+        n_base = len(self._base_keys)
+        keep = []
+        for lag in range(self.frame_stack):
+            for i, key in enumerate(self._base_keys):
+                if lag > self._SHALLOW_STACK_MAX_LAG and any(
+                    key.startswith(p) for p in self._SHALLOW_STACK_PREFIXES
+                ):
+                    continue
+                keep.append(lag * n_base + i)
+        self._stack_mask = np.array(keep, dtype=np.intp)
 
     def load(self) -> None:
         self.page.goto(self.url, wait_until="load")
@@ -180,7 +244,8 @@ class TurboKartEnv:
                 "opponentModels": self.opponent_models,
             },
         )
-        self.obs_keys = self._stack_keys(result["obsKeys"])
+        self._base_keys = result["obsKeys"]
+        self.obs_keys = self._stack_keys(self._base_keys)
         self.actions = result["actions"]
         return self._stack_obs(np.asarray(result["obs"], dtype=np.float32), reset=True)
 
@@ -231,8 +296,8 @@ def print_attribution_table(
     console: Console,
     title: str,
     attribution: dict[str, float],
-    top_n: int = 10,
-    bottom_n: int = 10,
+    top_n: int = 15,
+    bottom_n: int = 15,
 ) -> None:
     if not attribution:
         return
@@ -254,7 +319,10 @@ def print_attribution_table(
             table.add_row(key, f"{score:.4f}", "█" * bar_len, style="dim")
     total = len(sorted_items)
     console.print(table)
-    console.print(f"  [dim]{total} features total · showing top {min(top_n, total)} + bottom {min(bottom_n, len(bottom_items))}[/dim]")
+    console.print(
+        f"  [dim]{total} features total · showing top {min(top_n, total)} "
+        f"+ bottom {min(bottom_n, len(bottom_items))}[/dim]"
+    )
 
 
 def epsilon_by_step(step: int, start: float, end: float, decay_steps: int) -> float:
@@ -350,28 +418,60 @@ def export_dqn_json(
     manifest_path: Path | None = None,
 ) -> None:
     out_path.parent.mkdir(parents=True, exist_ok=True)
-    linear_layers = [m for m in model.net if isinstance(m, torch.nn.Linear)]
-    layers: list[dict[str, Any]] = []
-    for i, layer in enumerate(linear_layers):
-        layers.append(
-            {
-                "weights": layer.weight.detach().cpu().numpy().astype(float).reshape(-1).tolist(),
-                "biases": layer.bias.detach().cpu().numpy().astype(float).reshape(-1).tolist(),
-                "activation": "linear" if i == len(linear_layers) - 1 else "tanh",
-            }
-        )
+
+    def _serialize_linear(layer: torch.nn.Linear) -> dict[str, Any]:
+        return {
+            "weights": layer.weight.detach().cpu().numpy().astype(float).reshape(-1).tolist(),
+            "biases": layer.bias.detach().cpu().numpy().astype(float).reshape(-1).tolist(),
+        }
+
+    def _serialize_layernorm(layer: torch.nn.LayerNorm) -> dict[str, Any]:
+        return {
+            "weight": layer.weight.detach().cpu().numpy().astype(float).tolist(),
+            "bias": layer.bias.detach().cpu().numpy().astype(float).tolist(),
+            "eps": layer.eps,
+        }
+
+    trunk_layers: list[dict[str, Any]] = []
+    i = 0
+    modules = list(model.trunk)
+    while i < len(modules):
+        m = modules[i]
+        if isinstance(m, torch.nn.Linear):
+            d = _serialize_linear(m)
+            if i + 1 < len(modules) and isinstance(modules[i + 1], torch.nn.LayerNorm):
+                d["layernorm"] = _serialize_layernorm(modules[i + 1])
+                i += 1
+            if i + 1 < len(modules):
+                act = modules[i + 1]
+                if isinstance(act, torch.nn.GELU):
+                    d["activation"] = "gelu"
+                elif isinstance(act, torch.nn.Tanh):
+                    d["activation"] = "tanh"
+                elif isinstance(act, torch.nn.ReLU):
+                    d["activation"] = "relu"
+                else:
+                    d["activation"] = "tanh"
+                i += 1
+            else:
+                d["activation"] = "linear"
+            trunk_layers.append(d)
+        i += 1
 
     payload = {
         "type": "dqn",
-        "format": "turbo-kart-headless-dqn-v1",
+        "format": "turbo-kart-headless-dqn-v2",
+        "architecture": "dueling",
         "observationKeys": obs_keys,
         "actions": actions,
-        "layers": layers,
+        "trunk": trunk_layers,
+        "value_head": {**_serialize_linear(model.value_head), "activation": "linear"},
+        "advantage_head": {**_serialize_linear(model.advantage_head), "activation": "linear"},
         "meta": meta,
     }
     out_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
     if manifest_path is not None:
-        update_model_manifest(manifest_path, out_path, payload)
+        common.update_model_manifest(manifest_path, out_path, payload)
 
 
 def update_model_manifest(manifest_path: Path, model_path: Path, payload: dict[str, Any]) -> None:
@@ -476,7 +576,7 @@ def sample_map(args: argparse.Namespace) -> str:
 
 @torch.no_grad()
 def evaluate(
-    env: TurboKartEnv,
+    env: Any,
     model: DQN,
     episodes: int,
     *,
@@ -485,7 +585,7 @@ def evaluate(
     characters: list[str] | None = None,
     solo: bool,
     opponent_models: list[dict[str, Any]] | None = None,
-) -> dict[str, float]:
+) -> dict[str, Any]:
     old_solo = env.solo
     old_opponents = env.opponent_models
     env.solo = solo
@@ -495,6 +595,10 @@ def evaluate(
     laps = []
     race_times = []
     progresses = []
+    coins = []
+    item_uses = []
+    ult_uses = []
+    drift_boosts = []
     winner_chars: dict[str, int] = {}
     player_wins = 0
     try:
@@ -527,6 +631,10 @@ def evaluate(
             laps.append(float(last_info.get("lap", 0)))
             race_times.append(float(last_info.get("raceTime", 0)))
             progresses.append(float(last_info.get("progress", 0)))
+            coins.append(float(last_info.get("coins", 0)))
+            item_uses.append(float(last_info.get("itemUses", 0)))
+            ult_uses.append(float(last_info.get("ultUses", 0)))
+            drift_boosts.append(float(last_info.get("driftBoosts", 0)))
     finally:
         env.solo = old_solo
         env.opponent_models = old_opponents
@@ -538,12 +646,16 @@ def evaluate(
         "avg_laps": float(np.mean(laps)) if laps else 0.0,
         "avg_race_time": float(np.mean(race_times)) if race_times else 0.0,
         "avg_progress": float(np.mean(progresses)) if progresses else 0.0,
+        "avg_coins": float(np.mean(coins)) if coins else 0.0,
+        "avg_item_uses": float(np.mean(item_uses)) if item_uses else 0.0,
+        "avg_ult_uses": float(np.mean(ult_uses)) if ult_uses else 0.0,
+        "avg_drift_boosts": float(np.mean(drift_boosts)) if drift_boosts else 0.0,
         "winner_chars": winner_chars,
         "player_win_rate": player_wins / max(1, episodes),
     }
 
 
-def evaluate_tracks(env: TurboKartEnv, model: DQN, args: argparse.Namespace) -> dict[str, Any]:
+def evaluate_tracks(env: Any, model: DQN, args: argparse.Namespace) -> dict[str, Any]:
     per_track: dict[str, Any] = {}
     eval_maps = parse_csv(args.eval_maps)
     for map_id in eval_maps:
@@ -641,9 +753,9 @@ def train(args: argparse.Namespace) -> None:
         raise FileNotFoundError(index_path)
 
     with sync_playwright() as p:
-        browser = launch_chromium(p, args.auto_install_browser)
+        browser = common.launch_chromium(p, args.auto_install_browser)
         page = browser.new_page()
-        env = TurboKartEnv(
+        env = common.TurboKartEnv(
             page=page,
             index_path=index_path,
             map_id=args.map,
@@ -656,14 +768,14 @@ def train(args: argparse.Namespace) -> None:
             frame_skip=args.frame_skip,
         )
         env.load()
-        league = load_league_models(Path(args.league_manifest), args.league_limit) if args.self_play else []
+        league = common.load_league_models(Path(args.league_manifest), args.league_limit) if args.self_play else []
         obs = env.reset_with(
-            map_id=sample_map(args),
-            character=sample_character(args),
-            opponent_models=sample_league_opponents(args, league),
+            map_id=common.sample_map(args),
+            character=common.sample_character(args),
+            opponent_models=common.sample_league_opponents(args, league),
         )
         eval_page = browser.new_page()
-        eval_env = TurboKartEnv(
+        eval_env = common.TurboKartEnv(
             page=eval_page,
             index_path=index_path,
             map_id=args.map,
@@ -679,11 +791,25 @@ def train(args: argparse.Namespace) -> None:
         obs_dim = int(obs.shape[0])
         action_dim = len(env.actions)
 
-        q = DQN(obs_dim, action_dim, args.hidden)
-        target_q = DQN(obs_dim, action_dim, args.hidden)
+        q = DQN(
+            obs_dim,
+            action_dim,
+            args.hidden,
+            activation=args.activation,
+            layer_norm=args.layer_norm,
+            orthogonal_init=args.orthogonal_init,
+        )
+        target_q = DQN(
+            obs_dim,
+            action_dim,
+            args.hidden,
+            activation=args.activation,
+            layer_norm=args.layer_norm,
+            orthogonal_init=args.orthogonal_init,
+        )
         target_q.load_state_dict(q.state_dict())
         optimizer = torch.optim.Adam(q.parameters(), lr=args.lr)
-        buffer = ReplayBuffer(args.buffer_size)
+        buffer = common.ReplayBuffer(args.buffer_size)
 
         episode_reward = 0.0
         episode_count = 0
@@ -699,7 +825,7 @@ def train(args: argparse.Namespace) -> None:
         recent_action_counts = np.zeros(action_dim, dtype=np.int64)
         recent_q_max: deque[float] = deque(maxlen=1000)
         recent_q_mean: deque[float] = deque(maxlen=1000)
-        reference_metrics = waypoint_references(browser, index_path, args) if args.reference_episodes > 0 else {}
+        reference_metrics = common.waypoint_references(browser, index_path, args) if args.reference_episodes > 0 else {}
 
         start_payload = {
             "event": "start",
@@ -736,6 +862,9 @@ def train(args: argparse.Namespace) -> None:
                             f"[bold]Random character[/bold]: {args.random_character}",
                             f"[bold]Frame stack[/bold]: {args.frame_stack}",
                             f"[bold]Frame skip[/bold]: {args.frame_skip}",
+                            f"[bold]Activation[/bold]: {args.activation}",
+                            f"[bold]LayerNorm[/bold]: {args.layer_norm}",
+                            f"[bold]Orthogonal init[/bold]: {args.orthogonal_init}",
                             f"[bold]Self-play[/bold]: {args.self_play} ({len(league)} league models)",
                         ]
                     ),
@@ -778,7 +907,7 @@ def train(args: argparse.Namespace) -> None:
             recent_action_counts[action] += 1
 
             next_obs, reward, done, info = env.step(action)
-            buffer.add(Transition(obs, action, reward, next_obs, done))
+            buffer.add(common.Transition(obs, action, reward, next_obs, done))
             obs = next_obs
             episode_reward += reward
 
@@ -810,11 +939,11 @@ def train(args: argparse.Namespace) -> None:
                 recent_maps.append(env.map_id)
                 recent_chars.append(env.character)
                 if args.self_play:
-                    league = load_league_models(Path(args.league_manifest), args.league_limit)
+                    league = common.load_league_models(Path(args.league_manifest), args.league_limit)
                 obs = env.reset_with(
-                    map_id=sample_map(args),
-                    character=sample_character(args),
-                    opponent_models=sample_league_opponents(args, league),
+                    map_id=common.sample_map(args),
+                    character=common.sample_character(args),
+                    opponent_models=common.sample_league_opponents(args, league),
                 )
                 episode_reward = 0.0
 
@@ -822,7 +951,8 @@ def train(args: argparse.Namespace) -> None:
                 batch = buffer.sample(args.batch_size)
                 b_obs, b_actions, b_rewards, b_next_obs, b_dones = batch
                 with torch.no_grad():
-                    next_q = target_q(b_next_obs).max(dim=1).values
+                    best_actions = q(b_next_obs).argmax(dim=1, keepdim=True)
+                    next_q = target_q(b_next_obs).gather(1, best_actions).squeeze(1)
                     target = b_rewards + args.gamma * (1.0 - b_dones) * next_q
                 pred = q(b_obs).gather(1, b_actions).squeeze(1)
                 loss = torch.nn.functional.smooth_l1_loss(pred, target)
@@ -867,7 +997,7 @@ def train(args: argparse.Namespace) -> None:
                         task_id,
                         completed=step,
                         eps=f"{eps:.3f}",
-                        loss=format_float(last_loss, 4),
+                        loss=common.format_float(last_loss, 4),
                         episodes=f"{episode_count} a:{top_action}",
                     )
 
@@ -875,15 +1005,21 @@ def train(args: argparse.Namespace) -> None:
                 eval_report = evaluate_tracks(eval_env, q, args)
                 track_report = eval_report["tracks"].get(args.map) or next(iter(eval_report["tracks"].values()))
                 metrics = track_report["classic"]
-                attribution = smoothgrad_attribution(q, buffer, env.obs_keys) if len(buffer) >= 200 else {}
+                attribution = common.smoothgrad_attribution(q, buffer, env.obs_keys) if len(buffer) >= 200 else {}
                 if attribution:
                     eval_report["attribution"] = attribution
                 if args.json_logs:
                     emit_json({"event": "eval", "eval_step": step, **eval_report, "reference": reference_metrics})
                 else:
-                    print_eval_report(console, f"Evaluation @ step {step}", eval_report, reference_metrics)
+                    common.print_eval_report(console, f"Evaluation @ step {step}", eval_report, reference_metrics)
                     if attribution:
-                        print_attribution_table(console, f"SmoothGrad Attribution @ step {step}", attribution)
+                        common.print_attribution_table(console, f"SmoothGrad Attribution @ step {step}", attribution)
+                    common.print_action_distribution(
+                        console,
+                        f"Action Distribution @ step {step}",
+                        action_counts,
+                        [a["name"] for a in env.actions],
+                    )
                 checkpoint_path = Path(args.checkpoint_dir) / f"{args.model_id}-step-{step}.json"
                 export_dqn_json(
                     q,
@@ -896,8 +1032,11 @@ def train(args: argparse.Namespace) -> None:
                         "step": step,
                         "map": args.map,
                         "character": args.character,
-                            "frameStack": args.frame_stack,
-                            "frameSkip": args.frame_skip,
+                        "frameStack": args.frame_stack,
+                        "frameSkip": args.frame_skip,
+                        "activation": args.activation,
+                        "layerNorm": args.layer_norm,
+                        "orthogonalInit": args.orthogonal_init,
                         "metrics": metrics,
                         "eval": eval_report,
                         "reference": reference_metrics,
@@ -914,7 +1053,7 @@ def train(args: argparse.Namespace) -> None:
             iter(final_eval_report["tracks"].values())
         )
         final_metrics = final_track_report["classic"]
-        final_attribution = smoothgrad_attribution(q, buffer, env.obs_keys) if len(buffer) >= 200 else {}
+        final_attribution = common.smoothgrad_attribution(q, buffer, env.obs_keys) if len(buffer) >= 200 else {}
         if final_attribution:
             final_eval_report["attribution"] = final_attribution
         export_dqn_json(
@@ -930,6 +1069,9 @@ def train(args: argparse.Namespace) -> None:
                 "character": args.character,
                 "frameStack": args.frame_stack,
                 "frameSkip": args.frame_skip,
+                "activation": args.activation,
+                "layerNorm": args.layer_norm,
+                "orthogonalInit": args.orthogonal_init,
                 "metrics": final_metrics,
                 "eval": final_eval_report,
                 "reference": reference_metrics,
@@ -937,7 +1079,7 @@ def train(args: argparse.Namespace) -> None:
             },
             Path(args.manifest),
         )
-        if progress is not None:
+        if progress is not None and task_id is not None:
             progress.update(task_id, completed=args.steps)
             progress.stop()
         if args.json_logs:
@@ -951,9 +1093,12 @@ def train(args: argparse.Namespace) -> None:
                     "[yellow]No training episode completed before the step budget ended. "
                     "Increase --steps or reduce --frames for more episode-level feedback.[/yellow]"
                 )
-            print_eval_report(console, "Final Evaluation", final_eval_report, reference_metrics)
+            common.print_eval_report(console, "Final Evaluation", final_eval_report, reference_metrics)
             if final_attribution:
-                print_attribution_table(console, "Final SmoothGrad Attribution", final_attribution)
+                common.print_attribution_table(console, "Final SmoothGrad Attribution", final_attribution)
+            common.print_action_distribution(
+                console, "Final Action Distribution", action_counts, [a["name"] for a in env.actions]
+            )
             console.print(f"[green]Exported model:[/green] {args.out}")
         eval_page.close()
         browser.close()
@@ -962,10 +1107,10 @@ def train(args: argparse.Namespace) -> None:
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--index", default="index.html")
-    parser.add_argument("--out", default="models/dqn_model.json")
+    parser.add_argument("--out", default="models/dqn-latest.json")
     parser.add_argument("--manifest", default="models/manifest.json")
-    parser.add_argument("--model-id", default="dqn-core-mainframe")
-    parser.add_argument("--model-name", default="DQN Core Mainframe")
+    parser.add_argument("--model-id", default="dqn-latest")
+    parser.add_argument("--model-name", default="DQN Latest")
     parser.add_argument("--checkpoint-dir", default="models/checkpoints")
     parser.add_argument("--map", default="core_mainframe")
     parser.add_argument(
@@ -973,21 +1118,28 @@ def parse_args() -> argparse.Namespace:
         default="core_mainframe,audit_super_ring,compliance_chicane,black_ice_data_vault,protocol_amendment_labyrinth",
     )
     parser.add_argument("--random-map", action="store_true")
-    parser.add_argument("--eval-maps", default="core_mainframe")
+    parser.add_argument(
+        "--eval-maps",
+        default="core_mainframe,audit_super_ring,compliance_chicane,black_ice_data_vault,protocol_amendment_labyrinth",
+    )
     parser.add_argument("--character", default="florian")
     parser.add_argument("--characters", default="anton,artur,rissal,pia,florian")
     parser.add_argument("--random-character", action="store_true")
-    parser.add_argument("--frame-stack", type=int, default=1)
-    parser.add_argument("--frame-skip", type=int, default=4)
+    parser.add_argument("--frame-stack", type=int, default=4)
+    parser.add_argument("--frame-skip", type=int, default=6)
     parser.add_argument("--frames", type=int, default=7200)
-    parser.add_argument("--steps", type=int, default=50_000)
-    parser.add_argument("--hidden", type=int, default=128)
+    parser.add_argument("--steps", type=int, default=300_000)
+    parser.add_argument("--hidden", type=int, default=64)
+    parser.add_argument("--activation", choices=["tanh", "gelu", "relu"], default="tanh")
+    parser.add_argument("--layer-norm", action="store_true")
+    parser.add_argument("--orthogonal-init", dest="orthogonal_init", action="store_true")
+    parser.add_argument("--no-orthogonal-init", dest="orthogonal_init", action="store_false")
     parser.add_argument("--batch-size", type=int, default=256)
     parser.add_argument("--buffer-size", type=int, default=100_000)
     parser.add_argument("--learning-starts", type=int, default=2_000)
     parser.add_argument("--target-update", type=int, default=1_000)
-    parser.add_argument("--eval-every", type=int, default=10_000)
-    parser.add_argument("--episodes-eval", type=int, default=10)
+    parser.add_argument("--eval-every", type=int, default=25_000)
+    parser.add_argument("--episodes-eval", type=int, default=3)
     parser.add_argument("--reference-episodes", type=int, default=2)
     parser.add_argument("--log-every-episodes", type=int, default=10)
     parser.add_argument("--log-every-steps", type=int, default=1_000)
@@ -1013,7 +1165,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--classic-opponent-prob", type=float, default=0.25)
     parser.add_argument("--no-auto-install-browser", dest="auto_install_browser", action="store_false")
     parser.add_argument("--install-browser-only", action="store_true")
-    parser.set_defaults(auto_install_browser=True)
+    parser.set_defaults(auto_install_browser=True, orthogonal_init=True)
     return parser.parse_args()
 
 
