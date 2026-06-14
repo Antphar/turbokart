@@ -1,0 +1,27 @@
+<svg viewBox="0 0 64 64" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Turbo Kart Dash">
+  <!-- Regulaido ink tile -->
+  <rect x="0" y="0" width="64" height="64" rx="14" fill="#060514"/>
+  <rect x="0.75" y="0.75" width="62.5" height="62.5" rx="13.25" fill="none" stroke="#fd9927" stroke-opacity="0.18" stroke-width="1.5"/>
+
+  <!-- Turbo speed streaks (drawn behind the mark) -->
+  <g stroke-linecap="round">
+    <line x1="6"  y1="24"   x2="19" y2="24"   stroke="#fd9927" stroke-opacity="0.85" stroke-width="3"/>
+    <line x1="3"  y1="31.5" x2="17" y2="31.5" stroke="#fdb768" stroke-opacity="0.55" stroke-width="3"/>
+    <line x1="7"  y1="39"   x2="18" y2="39"   stroke="#fdad52" stroke-opacity="0.75" stroke-width="3"/>
+  </g>
+
+  <!-- Soft brand glow -->
+  <circle cx="36" cy="32" r="21" fill="#fd9927" fill-opacity="0.10"/>
+
+  <!-- Regulaido pinwheel logomark -->
+  <g transform="translate(16.997,13.04) scale(0.3064)">
+    <polygon fill="#fd9927" points="66.30638 51.4446 66.30638 0 102.3176 14.86177 66.30638 51.4446"/>
+    <polygon fill="#fda33d" points="57.73228 51.4446 57.73228 0 21.72105 14.86177 57.73228 51.4446"/>
+    <polygon fill="#fdad52" points="51.4446 57.73228 0 57.73228 15.14758 21.72105 51.4446 57.73228"/>
+    <polygon fill="#fdb768" points="51.4446 66.30638 0 66.30638 15.14758 102.3176 51.4446 66.30638"/>
+    <polygon fill="#fec27d" points="57.73228 72.59405 57.73228 123.75285 21.72105 108.89107 57.73228 72.59405"/>
+    <polygon fill="#fecc93" points="66.30638 72.59405 66.30638 123.75285 102.3176 108.89107 66.30638 72.59405"/>
+    <polygon fill="#fee0be" points="108.89107 21.72105 124.03865 57.73228 72.59405 57.73228 108.89107 21.72105"/>
+    <polygon fill="#fed6a8" points="108.89107 102.3176 124.03865 66.30638 72.59405 66.30638 108.89107 102.3176"/>
+  </g>
+</svg>
