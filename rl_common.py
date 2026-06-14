@@ -63,6 +63,59 @@ class ReplayBuffer:
         return obs, actions, rewards, next_obs, dones
 
 
+class PrioritizedReplayBuffer:
+    def __init__(self, capacity: int, alpha: float = 0.6):
+        self._capacity = capacity
+        self._alpha = alpha
+        self._data: list[Transition | None] = [None] * capacity
+        self._priorities = np.zeros(capacity, dtype=np.float64)
+        self._pos = 0
+        self._size = 0
+        self._max_priority = 1.0
+
+    @property
+    def data(self) -> list[Transition]:
+        return [t for t in self._data[: self._size] if t is not None]
+
+    def __len__(self) -> int:
+        return self._size
+
+    def add(self, transition: Transition) -> None:
+        self._data[self._pos] = transition
+        self._priorities[self._pos] = self._max_priority**self._alpha
+        self._pos = (self._pos + 1) % self._capacity
+        self._size = min(self._size + 1, self._capacity)
+
+    def sample(
+        self, batch_size: int, beta: float = 0.4
+    ) -> tuple[torch.Tensor, ...]:
+        priorities = self._priorities[: self._size]
+        probs = priorities / priorities.sum()
+        indices = np.random.choice(self._size, size=batch_size, p=probs, replace=False)
+
+        total = self._size
+        weights = (total * probs[indices]) ** (-beta)
+        weights /= weights.max()
+        weights_t = torch.tensor(weights, dtype=torch.float32)
+
+        batch = [self._data[i] for i in indices]
+        obs = torch.tensor(np.stack([t.obs for t in batch]), dtype=torch.float32)
+        if isinstance(batch[0].action, (int, np.integer)):
+            actions = torch.tensor([t.action for t in batch], dtype=torch.int64).unsqueeze(1)
+        else:
+            actions = torch.tensor(np.stack([t.action for t in batch]), dtype=torch.float32)
+        rewards = torch.tensor([t.reward for t in batch], dtype=torch.float32)
+        next_obs = torch.tensor(np.stack([t.next_obs for t in batch]), dtype=torch.float32)
+        dones = torch.tensor([t.done for t in batch], dtype=torch.float32)
+        return obs, actions, rewards, next_obs, dones, weights_t, indices
+
+    def update_priorities(self, indices: np.ndarray, td_errors: np.ndarray) -> None:
+        priorities = (np.abs(td_errors) + 1e-6) ** self._alpha
+        for idx, p in zip(indices, priorities):
+            self._priorities[idx] = p
+            self._max_priority = max(self._max_priority, float(p))
+
+
 class TurboKartEnv:
     def __init__(
         self,

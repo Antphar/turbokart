@@ -68,6 +68,11 @@ class ReplayBuffer:
         return obs, actions, rewards, next_obs, dones
 
 
+class _L2Norm(torch.nn.Module):
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        return x / (x.norm(dim=-1, keepdim=True) + 1e-8)
+
+
 class DQN(torch.nn.Module):
     """Dueling DQN: shared trunk → separate value and advantage streams."""
 
@@ -78,7 +83,9 @@ class DQN(torch.nn.Module):
         hidden: int = 128,
         activation: str = "tanh",
         layer_norm: bool = False,
+        l2_norm: bool = False,
         orthogonal_init: bool = False,
+        weight_norm: bool = False,
     ):
         super().__init__()
         activation = activation.lower()
@@ -86,6 +93,7 @@ class DQN(torch.nn.Module):
             raise ValueError(f"Unsupported activation: {activation}")
         self.activation_name = activation
         self.layer_norm_enabled = layer_norm
+        self.l2_norm_enabled = l2_norm
         layers: list[torch.nn.Module] = []
         in_dim = obs_dim
         for _ in range(2):
@@ -98,12 +106,17 @@ class DQN(torch.nn.Module):
                 layers.append(torch.nn.ReLU())
             else:
                 layers.append(torch.nn.Tanh())
+            if l2_norm:
+                layers.append(_L2Norm())
             in_dim = hidden
         self.trunk = torch.nn.Sequential(*layers)
         self.value_head = torch.nn.Linear(hidden, 1)
         self.advantage_head = torch.nn.Linear(hidden, action_dim)
+        self._weight_norm = weight_norm
         if orthogonal_init:
             self._init_weights()
+        if weight_norm:
+            self._project_weights()
 
     def _init_weights(self):
         for m in self.modules():
@@ -112,6 +125,14 @@ class DQN(torch.nn.Module):
                 torch.nn.init.zeros_(m.bias)
         torch.nn.init.orthogonal_(self.value_head.weight, gain=1.0)
         torch.nn.init.orthogonal_(self.advantage_head.weight, gain=0.01)
+
+    @torch.no_grad()
+    def _project_weights(self) -> None:
+        for m in self.trunk.modules():
+            if isinstance(m, torch.nn.Linear):
+                norm = m.weight.data.norm(p=2)
+                if norm > 0:
+                    m.weight.data.div_(norm)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         h = self.trunk(x)
@@ -797,7 +818,9 @@ def train(args: argparse.Namespace) -> None:
             args.hidden,
             activation=args.activation,
             layer_norm=args.layer_norm,
+            l2_norm=args.l2_norm,
             orthogonal_init=args.orthogonal_init,
+            weight_norm=args.weight_norm,
         )
         target_q = DQN(
             obs_dim,
@@ -805,11 +828,16 @@ def train(args: argparse.Namespace) -> None:
             args.hidden,
             activation=args.activation,
             layer_norm=args.layer_norm,
+            l2_norm=args.l2_norm,
             orthogonal_init=args.orthogonal_init,
+            weight_norm=args.weight_norm,
         )
         target_q.load_state_dict(q.state_dict())
         optimizer = torch.optim.Adam(q.parameters(), lr=args.lr)
-        buffer = common.ReplayBuffer(args.buffer_size)
+        if args.prioritized_replay:
+            buffer = common.PrioritizedReplayBuffer(args.buffer_size, alpha=args.per_alpha)
+        else:
+            buffer = common.ReplayBuffer(args.buffer_size)
 
         episode_reward = 0.0
         episode_count = 0
@@ -864,7 +892,11 @@ def train(args: argparse.Namespace) -> None:
                             f"[bold]Frame skip[/bold]: {args.frame_skip}",
                             f"[bold]Activation[/bold]: {args.activation}",
                             f"[bold]LayerNorm[/bold]: {args.layer_norm}",
+                            f"[bold]L2 Norm[/bold]: {args.l2_norm}",
                             f"[bold]Orthogonal init[/bold]: {args.orthogonal_init}",
+                            f"[bold]Weight norm[/bold]: {args.weight_norm}",
+                            f"[bold]PER[/bold]: {args.prioritized_replay}"
+                            + (f" (α={args.per_alpha}, β={args.per_beta_start}→{args.per_beta_end})" if args.prioritized_replay else ""),
                             f"[bold]Self-play[/bold]: {args.self_play} ({len(league)} league models)",
                         ]
                     ),
@@ -948,19 +980,35 @@ def train(args: argparse.Namespace) -> None:
                 episode_reward = 0.0
 
             if len(buffer) >= args.batch_size and step >= args.learning_starts:
-                batch = buffer.sample(args.batch_size)
-                b_obs, b_actions, b_rewards, b_next_obs, b_dones = batch
+                per_beta = (
+                    args.per_beta_start
+                    + (args.per_beta_end - args.per_beta_start) * min(1.0, step / args.steps)
+                ) if args.prioritized_replay else 0.0
+                batch = buffer.sample(args.batch_size, beta=per_beta) if args.prioritized_replay else buffer.sample(args.batch_size)
+                if args.prioritized_replay:
+                    b_obs, b_actions, b_rewards, b_next_obs, b_dones, is_weights, batch_indices = batch
+                else:
+                    b_obs, b_actions, b_rewards, b_next_obs, b_dones = batch
+                    is_weights = None
+                    batch_indices = None
                 with torch.no_grad():
                     best_actions = q(b_next_obs).argmax(dim=1, keepdim=True)
                     next_q = target_q(b_next_obs).gather(1, best_actions).squeeze(1)
                     target = b_rewards + args.gamma * (1.0 - b_dones) * next_q
                 pred = q(b_obs).gather(1, b_actions).squeeze(1)
-                loss = torch.nn.functional.smooth_l1_loss(pred, target)
+                td_errors = pred - target
+                if is_weights is not None:
+                    loss = (is_weights * torch.nn.functional.smooth_l1_loss(pred, target, reduction="none")).mean()
+                    buffer.update_priorities(batch_indices, td_errors.detach().cpu().numpy())
+                else:
+                    loss = torch.nn.functional.smooth_l1_loss(pred, target)
                 last_loss = float(loss.detach().cpu().item())
                 optimizer.zero_grad(set_to_none=True)
                 loss.backward()
                 torch.nn.utils.clip_grad_norm_(q.parameters(), args.grad_clip)
                 optimizer.step()
+                if q._weight_norm:
+                    q._project_weights()
 
             if step % args.target_update == 0:
                 target_q.load_state_dict(q.state_dict())
@@ -1132,9 +1180,15 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--hidden", type=int, default=64)
     parser.add_argument("--activation", choices=["tanh", "gelu", "relu"], default="tanh")
     parser.add_argument("--layer-norm", action="store_true")
+    parser.add_argument("--l2-norm", action="store_true")
+    parser.add_argument("--weight-norm", action="store_true")
     parser.add_argument("--orthogonal-init", dest="orthogonal_init", action="store_true")
     parser.add_argument("--no-orthogonal-init", dest="orthogonal_init", action="store_false")
     parser.add_argument("--batch-size", type=int, default=256)
+    parser.add_argument("--prioritized-replay", action="store_true")
+    parser.add_argument("--per-alpha", type=float, default=0.6)
+    parser.add_argument("--per-beta-start", type=float, default=0.4)
+    parser.add_argument("--per-beta-end", type=float, default=1.0)
     parser.add_argument("--buffer-size", type=int, default=100_000)
     parser.add_argument("--learning-starts", type=int, default=2_000)
     parser.add_argument("--target-update", type=int, default=1_000)
