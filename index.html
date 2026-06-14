@@ -5,6 +5,19 @@
 <meta name="viewport" content="width=device-width,initial-scale=1,user-scalable=no" />
 <title>Turbo Kart Dash</title>
 <style>
+  /* ---- Regulaido brand tokens ---- */
+  :root {
+    --reg-orange: #fd9927;       /* Regulaido primary (logomark) */
+    --reg-orange-soft: #fdb768;  /* Amber tint from logomark */
+    --reg-purple: #7b75ff;       /* Secondary accent */
+    --reg-cyan: #57f2ff;         /* Info / interactive */
+    --reg-ink: #060514;          /* Deep background */
+    --reg-surface: rgba(255, 255, 255, 0.04);
+    --reg-surface-hover: rgba(255, 255, 255, 0.08);
+    --reg-border: rgba(255, 255, 255, 0.1);
+    --reg-text: #f4eee6;         /* Warm near-white */
+    --reg-text-dim: #a8a2b8;
+  }
   *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
   html, body {
     width: 100%; height: 100%; overflow: hidden;
@@ -20,36 +33,6 @@
     background: #152216;
     image-rendering: optimizeSpeed;
   }
-  #crt-overlay {
-    position: absolute;
-    inset: 0;
-    pointer-events: none;
-    z-index: 20;
-    opacity: 0;
-    transition: opacity 0.18s ease;
-    background:
-      linear-gradient(rgba(255,255,255,0.055) 50%, rgba(0,0,0,0.12) 50%),
-      radial-gradient(circle at center, rgba(87,242,255,0.12), rgba(6,5,20,0.22) 65%, rgba(0,0,0,0.42) 100%);
-    background-size: 100% 4px, 100% 100%;
-    box-shadow: inset 0 0 80px rgba(87, 242, 255, 0.12), inset 0 0 180px rgba(123, 117, 255, 0.18);
-    mix-blend-mode: screen;
-  }
-  #crt-overlay.active {
-    opacity: 0.72;
-  }
-  #crt-overlay::after {
-    content: "";
-    position: absolute;
-    inset: 0;
-    background: linear-gradient(90deg, rgba(255,0,80,0.04), rgba(0,255,255,0.035), rgba(255,255,255,0.02));
-    animation: crtFlicker 2.6s steps(3, end) infinite;
-  }
-  @keyframes crtFlicker {
-    0%, 100% { opacity: 0.42; transform: translateX(0); }
-    45% { opacity: 0.62; transform: translateX(0.6px); }
-    70% { opacity: 0.35; transform: translateX(-0.5px); }
-  }
-
   /* ---- Overlays (title / pause / finish) ---- */
   .overlay {
     position: absolute; inset: 0;
@@ -73,23 +56,33 @@
 
   @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
 
+  /* ---- Brand lockup (logomark + wordmark) ---- */
+  .brand-lockup {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 14px;
+    margin-bottom: 10px;
+  }
+  .brand-mark {
+    width: clamp(56px, 9vw, 84px);
+    height: auto;
+    filter: drop-shadow(0 6px 18px rgba(253, 153, 39, 0.28));
+  }
   .title-text {
-    font-size: clamp(38px, 7.5vw, 92px);
-    font-weight: 900;
-    letter-spacing: 4px;
+    font-size: clamp(34px, 6.5vw, 78px);
+    font-weight: 800;
+    letter-spacing: 6px;
     line-height: 1;
-    background: linear-gradient(90deg, #7b75ff 0%, #fd9927 35%, #a4ff80 65%, #57f2ff 100%); /* Regulaido Primary, Accent, Success and info */
-    -webkit-background-clip: text;
-    background-clip: text;
-    color: transparent;
-    filter: drop-shadow(0 0 20px rgba(123,117,255,0.3));
+    color: var(--reg-text);
     margin-bottom: 8px;
     text-transform: uppercase;
   }
+  .title-text .accent { color: var(--reg-orange); }
   .subtitle {
-    font-size: clamp(13px, 1.5vw, 17px);
-    color: #ebe4ff; /* Regulaido info color */
-    letter-spacing: 2px;
+    font-size: clamp(12px, 1.4vw, 15px);
+    color: var(--reg-text-dim);
+    letter-spacing: 3px;
     margin-bottom: 26px;
     text-transform: uppercase;
     font-weight: 600;
@@ -121,44 +114,47 @@
   }
   .controls-grid .desc { color: #ebe4ff; text-align: left; }
 
-  /* Rounded capsule buttons matching Regulaido */
+  /* ---- Sleek flat buttons (Regulaido) ---- */
   .btn {
-    background: linear-gradient(135deg, #7b75ff, #fd9927); /* Regulaido Primary to Accent */
-    color: white;
-    font-weight: 800;
-    font-size: 18px;
-    padding: 14px 44px;
-    border: none;
-    border-radius: 2rem; /* Symmetrical capsule */
+    background: var(--reg-orange); /* Regulaido primary, flat */
+    color: #1a0f02;
+    font-weight: 700;
+    font-size: 16px;
+    padding: 13px 40px;
+    border: 1px solid transparent;
+    border-radius: 12px;
     cursor: pointer;
-    letter-spacing: 2px;
+    letter-spacing: 1.5px;
     text-transform: uppercase;
-    box-shadow: 0 8px 24px rgba(123, 117, 255, 0.4), inset 0 -3px 0 rgba(0,0,0,0.18);
-    transition: transform 0.12s ease, box-shadow 0.12s ease;
+    box-shadow: 0 2px 10px rgba(253, 153, 39, 0.2);
+    transition: background 0.15s ease, border-color 0.15s ease, transform 0.1s ease;
   }
-  .btn:hover { transform: translateY(-2px) scale(1.03); box-shadow: 0 12px 30px rgba(123, 117, 255, 0.55); }
-  .btn:active { transform: translateY(1px) scale(0.98); }
+  .btn:hover { background: var(--reg-orange-soft); transform: translateY(-1px); }
+  .btn:active { transform: translateY(0); }
 
+  /* Secondary: quiet surface with thin border */
   .btn-alt {
-    background: linear-gradient(135deg, #a4ff80, #7b75ff); /* Success Green to Primary Purple */
-    box-shadow: 0 8px 24px rgba(164, 255, 128, 0.3), inset 0 -3px 0 rgba(0,0,0,0.18);
+    background: var(--reg-surface);
+    color: var(--reg-text);
+    border: 1px solid var(--reg-border);
+    box-shadow: none;
   }
-  .btn-alt:hover { box-shadow: 0 12px 30px rgba(164, 255, 128, 0.45); }
+  .btn-alt:hover { background: var(--reg-surface-hover); border-color: rgba(255, 255, 255, 0.18); }
 
   .hint { font-size: 12px; color: #8a8da8; margin-top: 14px; letter-spacing: 1px; text-transform: uppercase; }
-  .crt-toggle {
-    margin-top: 2px;
-    padding: 9px 18px;
+  .toggle-btn {
+    padding: 10px 18px;
     font-size: 11px;
     letter-spacing: 1.5px;
-    background: rgba(255, 255, 255, 0.06);
-    color: #ebe4ff;
-    border: 1px solid rgba(87, 242, 255, 0.28);
-    box-shadow: 0 0 18px rgba(87, 242, 255, 0.12), inset 0 -2px 0 rgba(0,0,0,0.22);
+    background: var(--reg-surface);
+    color: var(--reg-text-dim);
+    border: 1px solid var(--reg-border);
+    box-shadow: none;
   }
-  .crt-toggle.active {
-    color: #060514;
-    background: linear-gradient(135deg, #57f2ff, #a4ff80);
+  .toggle-btn.active {
+    color: var(--reg-ink);
+    background: var(--reg-cyan);
+    border-color: var(--reg-cyan);
   }
 
   .results {
@@ -899,8 +895,6 @@
   <canvas id="game"></canvas>
   <canvas id="game3d" style="position:absolute;inset:0;width:100%;height:100%;display:none;z-index:1;"></canvas>
   <canvas id="hud-overlay" style="position:absolute;inset:0;width:100%;height:100%;display:none;z-index:2;pointer-events:none;"></canvas>
-  <div id="crt-overlay" aria-hidden="true"></div>
-
   <!-- Audio Notification Toast -->
   <div id="audio-toast" class="audio-toast hidden">
     <div class="audio-icon" id="audio-toast-icon"><svg width="24" height="24" viewBox="0 0 24 24" fill="none"><rect x="4" y="2" width="3" height="20" rx="1" fill="#57f2ff"/><rect x="10" y="6" width="3" height="12" rx="1" fill="#a4ff80"/><rect x="16" y="4" width="3" height="16" rx="1" fill="#7b75ff"/></svg></div>
@@ -913,8 +907,20 @@
 
   <!-- Title screen -->
   <div id="title-screen" class="overlay">
-    <div class="title-text">Turbo Kart Dash</div>
-    <div class="subtitle" style="color: #7b75ff;">Regulaido Speedways: Got Hands Edition</div>
+    <div class="brand-lockup">
+      <svg class="brand-mark" viewBox="0 0 124.03865 123.75285" xmlns="http://www.w3.org/2000/svg" aria-label="Regulaido">
+        <polygon fill="#fd9927" points="66.30638 51.4446 66.30638 0 102.3176 14.86177 66.30638 51.4446"/>
+        <polygon fill="#fda33d" points="57.73228 51.4446 57.73228 0 21.72105 14.86177 57.73228 51.4446"/>
+        <polygon fill="#fdad52" points="51.4446 57.73228 0 57.73228 15.14758 21.72105 51.4446 57.73228"/>
+        <polygon fill="#fdb768" points="51.4446 66.30638 0 66.30638 15.14758 102.3176 51.4446 66.30638"/>
+        <polygon fill="#fec27d" points="57.73228 72.59405 57.73228 123.75285 21.72105 108.89107 57.73228 72.59405"/>
+        <polygon fill="#fecc93" points="66.30638 72.59405 66.30638 123.75285 102.3176 108.89107 66.30638 72.59405"/>
+        <polygon fill="#fee0be" points="108.89107 21.72105 124.03865 57.73228 72.59405 57.73228 108.89107 21.72105"/>
+        <polygon fill="#fed6a8" points="108.89107 102.3176 124.03865 66.30638 72.59405 66.30638 108.89107 102.3176"/>
+      </svg>
+      <div class="title-text">Turbo Kart <span class="accent">Dash</span></div>
+    </div>
+    <div class="subtitle">Regulaido Speedways &middot; Got Hands Edition</div>
     <div class="controls-grid">
       <div style="font-weight:700; color:#7b75ff;">P1 Controls (WASD)</div><div style="font-weight:700; color:#ff4d6d;">P2 Controls (Arrows)</div>
       <div><span class="key">W</span> / <span class="key">A</span> / <span class="key">S</span> / <span class="key">D</span> - Drive</div><div><span class="key">↑</span> / <span class="key">←</span> / <span class="key">↓</span> / <span class="key">→</span> - Drive</div>
@@ -925,12 +931,11 @@
         <span class="key">P</span> - Pause &nbsp;·&nbsp; <span class="key">R</span> - Restart &nbsp;·&nbsp; <span class="key">M</span> - Mute
       </div>
     </div>
-    <div style="display:flex; flex-direction:column; gap:12px;">
-      <button class="btn btn-alt" id="start-1p-btn">1 Player Race</button>
-      <button class="btn btn-alt" id="start-2p-btn" style="background: rgba(255, 255, 255, 0.05); color: #fff;">2 Players Split-Screen</button>
-      <button class="btn" id="start-p2p-btn" style="background: linear-gradient(135deg, #7b75ff, #57f2ff); box-shadow: 0 4px 15px rgba(123, 117, 255, 0.35);">Online PvP</button>
-      <button class="btn btn-alt" id="settings-btn" type="button" style="background: rgba(255, 255, 255, 0.08); color: #fff;">Settings</button>
-      <button class="btn crt-toggle" id="crt-toggle-btn" type="button">CRT Overlay: Off</button>
+    <div style="display:flex; flex-direction:column; gap:10px;">
+      <button class="btn" id="start-1p-btn">1 Player Race</button>
+      <button class="btn btn-alt" id="start-2p-btn">2 Players Split-Screen</button>
+      <button class="btn btn-alt" id="start-p2p-btn">Online PvP</button>
+      <button class="btn btn-alt" id="settings-btn" type="button">Settings</button>
     </div>
     <div class="hint pulse">Choose a mode to start</div>
   </div>
@@ -942,8 +947,8 @@
     <div class="settings-panel">
       <div class="settings-label">View Mode</div>
       <div style="display:flex;gap:10px;margin-bottom:14px;">
-        <button class="btn crt-toggle" id="view-2d-btn" type="button" style="flex:1;">Top-Down 2D</button>
-        <button class="btn crt-toggle" id="view-3d-btn" type="button" style="flex:1;">3D Chase Cam</button>
+        <button class="btn toggle-btn" id="view-2d-btn" type="button" style="flex:1;">Top-Down 2D</button>
+        <button class="btn toggle-btn" id="view-3d-btn" type="button" style="flex:1;">3D Chase Cam</button>
       </div>
       <div class="settings-label">Audio Mix</div>
       <div class="volume-controls" id="audio-settings-container">
@@ -959,7 +964,7 @@
         </label>
       </div>
       <div class="settings-actions">
-        <button class="btn btn-alt" id="settings-back-btn" type="button" style="background: rgba(255,255,255,0.06); color: #fff;">Back to Menu</button>
+        <button class="btn btn-alt" id="settings-back-btn" type="button">Back to Menu</button>
       </div>
     </div>
   </div>
@@ -973,7 +978,7 @@
       <!-- HOST SECTION -->
       <div class="p2p-section">
         <h3>Host a New Race</h3>
-        <button class="btn btn-alt" id="p2p-host-btn" style="background: linear-gradient(135deg, #7b75ff, #bd57ff);">Create Lobby</button>
+        <button class="btn" id="p2p-host-btn">Create Lobby</button>
         <div id="p2p-host-status" class="p2p-status">Click Create Lobby to generate a code</div>
         <div id="p2p-code-box" style="display: none;">
           <div class="p2p-status">Share this code with your peer:</div>
@@ -990,14 +995,14 @@
         <h3>Join a Race</h3>
         <div class="p2p-input-group">
           <input type="text" id="p2p-join-input" class="p2p-input" placeholder="Enter Lobby Code" maxlength="6" style="text-transform: uppercase;">
-          <button class="btn" id="p2p-join-btn" style="background: linear-gradient(135deg, #57f2ff, #7b75ff); padding: 10px 20px;">Join</button>
+          <button class="btn" id="p2p-join-btn" style="padding: 10px 20px;">Join</button>
         </div>
         <div id="p2p-join-status" class="p2p-status">Enter code and click Join</div>
         <div id="p2p-join-roster" class="p2p-roster"></div>
       </div>
 
       <!-- BACK BUTTON -->
-      <button class="btn btn-alt" id="p2p-back-btn" style="background: rgba(255,255,255,0.06); color: #fff; margin-top: 10px;">Back to Menu</button>
+      <button class="btn btn-alt" id="p2p-back-btn" style="margin-top: 10px;">Back to Menu</button>
     </div>
   </div>
 
@@ -1040,8 +1045,8 @@
     </div>
 
     <div style="display:flex; gap:10px; flex-wrap:wrap; justify-content:center; margin-top: 6px;">
-      <button class="btn btn-alt" id="select-back-btn" type="button" style="background: rgba(255,255,255,0.06); color: #fff;">Main Menu</button>
-      <button class="btn" id="drive-btn" style="background: linear-gradient(135deg, #a4ff80, #7b75ff); box-shadow: 0 8px 24px rgba(123, 117, 255, 0.45);">Drive!</button>
+      <button class="btn btn-alt" id="select-back-btn" type="button">Main Menu</button>
+      <button class="btn" id="drive-btn">Drive!</button>
     </div>
     <div class="hint" id="lobby-hint">or press Space to lock (P1) · RShift to lock (P2) · Esc for menu</div>
   </div>
@@ -1080,7 +1085,6 @@ const settingsScreen = document.getElementById("settings-screen");
 const selectScreen = document.getElementById("select-screen");
 const pauseScreen = document.getElementById("pause-screen");
 const finishScreen = document.getElementById("finish-screen");
-const crtOverlay = document.getElementById("crt-overlay");
 const finishResults = document.getElementById("finish-results");
 const finishTitle = document.getElementById("finish-title");
 const start1pBtn = document.getElementById("start-1p-btn");
@@ -1094,7 +1098,6 @@ const musicVolumeInput = document.getElementById("music-volume-input");
 const musicVolumeValue = document.getElementById("music-volume-value");
 const sfxVolumeInput = document.getElementById("sfx-volume-input");
 const sfxVolumeValue = document.getElementById("sfx-volume-value");
-const crtToggleBtn = document.getElementById("crt-toggle-btn");
 const aiSelectSection = document.getElementById("ai-select-section");
 const aiModelSelect = document.getElementById("ai-model-select");
 const aiModelStatus = document.getElementById("ai-model-status");
@@ -1119,7 +1122,6 @@ const p2pBackBtn = document.getElementById("p2p-back-btn");
 let peer = null;
 let p2pConnections = new Map();
 let p2pJoinAttemptSeq = 0;
-let crtOverlayEnabled = false;
 let aiModelManifest = null;
 const DEFAULT_AI_MODEL_ID = "dqn-selfplay-booster-stack4-skip6";
 let selectedAiModelId = DEFAULT_AI_MODEL_ID;
@@ -1147,7 +1149,6 @@ function saveGameSettings(patch = {}) {
     const next = {
       viewMode: game?.viewMode || savedSettings.viewMode || "2d",
       musicTrack: Sound?.trackIdx ?? savedSettings.musicTrack ?? 0,
-      crtOverlay: !!crtOverlayEnabled,
       muted: !!Sound?.muted,
       musicVolume: Sound?.musicVolume ?? savedSettings.musicVolume ?? 0.8,
       sfxVolume: Sound?.sfxVolume ?? savedSettings.sfxVolume ?? 1.0,
@@ -15859,14 +15860,6 @@ function showSettingsScreen() {
   settingsScreen.classList.remove("hidden");
 }
 
-function setCrtOverlayEnabled(enabled) {
-  crtOverlayEnabled = enabled;
-  crtOverlay.classList.toggle("active", enabled);
-  crtToggleBtn.classList.toggle("active", enabled);
-  crtToggleBtn.textContent = enabled ? "CRT Overlay: On" : "CRT Overlay: Off";
-  saveGameSettings({ crtOverlay: enabled });
-}
-
 async function startSelectedRace() {
   if (!game.multiplayer) {
     await loadSelectedAiModel();
@@ -15885,7 +15878,6 @@ function applyStoredSettings() {
     game.viewMode = "2d";
     return;
   }
-  setCrtOverlayEnabled(!!savedSettings.crtOverlay);
   setViewMode(savedSettings.viewMode === "3d" ? "3d" : "2d");
   Sound.setMusicVolume(savedSettings.musicVolume ?? Sound.musicVolume, { persist: false });
   Sound.setSfxVolume(savedSettings.sfxVolume ?? Sound.sfxVolume, { persist: false });
@@ -15957,11 +15949,6 @@ if (aiImportBtn && aiImportInput) {
 selectBackBtn.addEventListener("click", () => {
   Sound.ensure(); Sound.resume();
   showMainMenu();
-});
-
-crtToggleBtn.addEventListener("click", () => {
-  Sound.ensure(); Sound.resume();
-  setCrtOverlayEnabled(!crtOverlayEnabled);
 });
 
 // Play vocoder jingle on first title screen interaction
